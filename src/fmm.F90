@@ -424,7 +424,7 @@ contains
         integer :: mpi_size, mpi_rank, ierr, work_size, work_start, work_stop, node_idx
         integer, allocatable :: terminal_node_list(:)
 
-        allocate (tree%cell_multipoles(tree%num_nodes, settings%multipole_size), source=0.0)
+        allocate (tree%cell_multipoles(tree%num_nodes, settings%multipole_size), source=0.0D0)
 #ifdef VAR_MPI
         call mpi_comm_size(comm, mpi_size, ierr)
         call mpi_comm_rank(comm, mpi_rank, ierr)
@@ -502,13 +502,13 @@ contains
         N = size(x)
 
         length = (max_field_order + 1)*(max_field_order + 2)*(max_field_order + 3)/6
-        allocate (F(length), source=0.0)
+        allocate (F(length), source=0.0D0)
         max_multipole_order = NINT((size(multipole, 2)*6)**(1./3.)) - 2
 
         max_tensor_order = max_field_order + max_multipole_order
 
         length = (max_tensor_order + 1)*(max_tensor_order + 2)*(max_tensor_order + 3)/6
-        allocate (T(N, length), source=0.0)
+        allocate (T(N, length), source=0.0D0)
 
         ! T(i, 1) -> T0
         ! T(i, 2) -> T1_x
@@ -741,7 +741,7 @@ contains
         type(list_type) :: cell_list
         integer :: work_start, work_stop, work_size
         integer :: mpi_rank, mpi_size, ierr
-        allocate (tree%local_expansion(tree%num_nodes, settings%multipole_size), source=0.0)
+        allocate (tree%local_expansion(tree%num_nodes, settings%multipole_size), source=0.0D0)
 #ifdef VAR_MPI
         call mpi_comm_size(comm, mpi_size, ierr)
         call mpi_comm_rank(comm, mpi_rank, ierr)
