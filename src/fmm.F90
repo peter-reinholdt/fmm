@@ -75,7 +75,7 @@ contains
         k = x + y + z
         ! number of components before order k is k*(k+1)*(k+2)/6
         ! (y**2 + 2*y*z + y + z**2 + 3*z)/2 + 1 is the symmetry-packed index of the current slice
-        idx = k*(k + 1)*(k + 2)/6 + (y**2 + 2*y*z + y + z**2 + 3*z)/2 + 1
+        idx = k * (k + 1) * (k + 2) / 6 + (y**2 + 2 * y * z + y + z**2 + 3 * z) / 2 + 1
     end function xyz2idx
 
     pure function factorial(n)
@@ -84,20 +84,20 @@ contains
         real(8) :: factorial
         factorial = 1
         do i = n, 1, -1
-            factorial = factorial*i
+            factorial = factorial * i
         end do
     end function
 
     pure function trinom(i, j, k)
         integer, intent(in) :: i, j, k
         real(8) :: trinom
-        trinom = factorial(i + j + k)/(factorial(i)*factorial(j)*factorial(k))
+        trinom = factorial(i + j + k) / (factorial(i) * factorial(j) * factorial(k))
     end function trinom
 
     pure function binom(n, k)
         integer, intent(in) :: n, k
         real(8) :: binom
-        binom = factorial(n)/(factorial(k)*factorial(n - k))
+        binom = factorial(n) / (factorial(k) * factorial(n - k))
     end function binom
 
     subroutine list_append(list, element)
@@ -107,7 +107,7 @@ contains
         if (list%head > size(list%elements)) then
             allocate (swap(list%head))
             call move_alloc(list%elements, swap)
-            allocate (list%elements(2*list%head))
+            allocate (list%elements(2 * list%head))
             list%elements(1:size(swap)) = swap(:)
             deallocate (swap)
         end if
@@ -140,7 +140,7 @@ contains
         settings%expansion_order = expansion_order
         settings%theta = theta
         n = settings%expansion_order
-        multipole_size = (n + 1)*(n + 2)*(n + 3)/6
+        multipole_size = (n + 1) * (n + 2) * (n + 3) / 6
         settings%multipole_size = multipole_size
 
         if (.not. associated(tree%root_node)) allocate (tree%root_node)
@@ -150,12 +150,12 @@ contains
         nullify (tree%root_node%parent)
         tree%num_nodes = 1
         tree%root_node%depth = 1
-        tree%root_node%center = sum(coordinates, 1)/size(coordinates, 1)
+        tree%root_node%center = sum(coordinates, 1) / size(coordinates, 1)
         tree%root_node%r = max( &
                            maxval(abs(coordinates(:, 1) - tree%root_node%center(1))), &
                            maxval(abs(coordinates(:, 2) - tree%root_node%center(2))), &
-                           maxval(abs(coordinates(:, 3) - tree%root_node%center(3))))*1.0001
-        tree%root_node%rmax = sqrt(0.5*3*tree%root_node%r*tree%root_node%r)
+                           maxval(abs(coordinates(:, 3) - tree%root_node%center(3)))) * 1.0001
+        tree%root_node%rmax = sqrt(0.5 * 3 * tree%root_node%r * tree%root_node%r)
         tree%coordinates => coordinates
         tree%source_multipoles => multipoles
 
@@ -197,14 +197,14 @@ contains
         node%occupied(octant) = .TRUE.
         node%is_terminal = .FALSE.
 
-        r = node%r*0.5
+        r = node%r * 0.5
         center = node%center
-        center(1) = center(1) + r*(IAND(octant, 1)*2 - 1)
-        center(2) = center(2) + r*(IAND(octant, 2) - 1)
-        center(3) = center(3) + r*(IAND(octant, 4)/2 - 1)
+        center(1) = center(1) + r * (IAND(octant, 1) * 2 - 1)
+        center(2) = center(2) + r * (IAND(octant, 2) - 1)
+        center(3) = center(3) + r * (IAND(octant, 4) / 2 - 1)
 
         node%children(octant)%r = r
-        node%children(octant)%rmax = sqrt(0.5*3*r*r)
+        node%children(octant)%rmax = sqrt(0.5 * 3 * r * r)
         node%children(octant)%center = center
         node%children(octant)%parent => node
         node%children(octant)%depth = node%depth + 1
@@ -309,7 +309,7 @@ contains
         real(8) :: r
         delta = node_i%center - node_j%center
         r = norm2(delta)
-        if (r*theta > node_i%rmax + node_j%rmax) then
+        if (r * theta > node_i%rmax + node_j%rmax) then
             ! far field
             call list_append(node_i%cell_interactions, node_j%idx)
         else if (node_i%is_terminal .and. node_j%is_terminal) then
@@ -345,7 +345,7 @@ contains
             call multipole_accumulate(source_node_index, tree%node_list(target_node_index)%node%parent%idx)
         end if
         delta = tree%centers(source_node_index, :) - tree%centers(target_node_index, :)
-        max_multipole_order = NINT((size(tree%cell_multipoles, 2)*6)**(1./3.)) - 2
+        max_multipole_order = NINT((size(tree%cell_multipoles, 2) * 6)**(1./3.)) - 2
 
         do source_order = 0, max_multipole_order
             do target_order = source_order, settings%expansion_order
@@ -361,10 +361,10 @@ contains
                                         target_index = xyz2idx(tx, ty, tz)
                                         ! unsure about this ....
                                         ! maybe needs symmetry factor?
-                                        symfac = binom(tx, sx)*binom(ty, sy)*binom(tz, sz)
-                                        monomial = delta(1)**(tx - sx)*delta(2)**(ty - sy)*delta(3)**(tz - sz)
+                                        symfac = binom(tx, sx) * binom(ty, sy) * binom(tz, sz)
+                                        monomial = delta(1)**(tx - sx) * delta(2)**(ty - sy) * delta(3)**(tz - sz)
                                         tree%cell_multipoles(target_node_index, target_index) = tree%cell_multipoles(target_node_index, target_index) &
-                                                                                                + symfac*monomial*tree%cell_multipoles(source_node_index, source_index)
+                                                                                                + symfac * monomial * tree%cell_multipoles(source_node_index, source_index)
                                     end do
                                 end do
                             end do
@@ -385,7 +385,7 @@ contains
         integer :: max_multipole_order
         real(8) :: monomial(size(dx))
 
-        max_multipole_order = NINT((size(source_multipole, 2)*6)**(1./3.)) - 2
+        max_multipole_order = NINT((size(source_multipole, 2) * 6)**(1./3.)) - 2
         do source_order = 0, max_multipole_order
             do target_order = source_order, settings%expansion_order
                 do sx = source_order, 0, -1
@@ -398,10 +398,10 @@ contains
                                     do tz = target_order, sz, -1
                                         if (tx + ty + tz /= target_order) cycle
                                         target_index = xyz2idx(tx, ty, tz)
-                                        symfac = binom(tx, sx)*binom(ty, sy)*binom(tz, sz)
-                                        monomial = dx**(tx - sx)*dy**(ty - sy)*dz**(tz - sz)
+                                        symfac = binom(tx, sx) * binom(ty, sy) * binom(tz, sz)
+                                        monomial = dx**(tx - sx) * dy**(ty - sy) * dz**(tz - sz)
                                         target_multipole(target_index) = target_multipole(target_index) &
-                                                                         + symfac*sum(monomial*source_multipole(:, source_index))
+                                                                         + symfac * sum(monomial * source_multipole(:, source_index))
                                     end do
                                 end do
                             end do
@@ -415,7 +415,11 @@ contains
     subroutine multipole_expansion(comm)
         ! particle_to_multipole and multipole_to_multipole combined
 #ifdef VAR_MPI
+#if defined(USE_MPI_MOD_F90)
         use mpi
+#else
+        include 'mpif.h'
+#endif
 #endif
         integer, intent(in) :: comm
         integer :: i, num_terminal
@@ -448,9 +452,9 @@ contains
             terminal_node_list(num_terminal) = node%idx
         end do
 
-        work_size = num_terminal/mpi_size
-        work_start = 1 + mpi_rank*work_size
-        work_stop = (mpi_rank + 1)*work_size
+        work_size = num_terminal / mpi_size
+        work_start = 1 + mpi_rank * work_size
+        work_stop = (mpi_rank + 1) * work_size
         if (mpi_rank == mpi_size - 1) work_stop = num_terminal
 
         ! particle_to_multipole
@@ -501,13 +505,13 @@ contains
 
         N = size(x)
 
-        length = (max_field_order + 1)*(max_field_order + 2)*(max_field_order + 3)/6
+        length = (max_field_order + 1) * (max_field_order + 2) * (max_field_order + 3) / 6
         allocate (F(length), source=0.0D0)
-        max_multipole_order = NINT((size(multipole, 2)*6)**(1./3.)) - 2
+        max_multipole_order = NINT((size(multipole, 2) * 6)**(1./3.)) - 2
 
         max_tensor_order = max_field_order + max_multipole_order
 
-        length = (max_tensor_order + 1)*(max_tensor_order + 2)*(max_tensor_order + 3)/6
+        length = (max_tensor_order + 1) * (max_tensor_order + 2) * (max_tensor_order + 3) / 6
         allocate (T(N, length), source=0.0D0)
 
         ! T(i, 1) -> T0
@@ -530,7 +534,7 @@ contains
         end if
         do field_order = 0, max_field_order
             do multipole_order = 0, max_multipole_order
-                taylor = (-1.0)**(multipole_order + 1)/factorial(multipole_order)
+                taylor = (-1.0)**(multipole_order + 1) / factorial(multipole_order)
                 do sx = multipole_order, 0, -1
                     do sy = multipole_order, 0, -1
                         do sz = multipole_order, 0, -1
@@ -544,7 +548,7 @@ contains
                                         field_index = xyz2idx(tx, ty, tz)
                                         tensor_index = xyz2idx(sx + tx, sy + ty, sz + tz)
                                         symfac = trinom(sx, sy, sz)
-                                        F(field_index) = F(field_index) + taylor*symfac*SUM(multipole(:, multipole_index)*T(:, tensor_index))
+                                        F(field_index) = F(field_index) + taylor * symfac * SUM(multipole(:, multipole_index) * T(:, tensor_index))
                                     end do
                                 end do
                             end do
@@ -557,7 +561,11 @@ contains
 
     subroutine particle_fields(comm, field, exclusions, max_field_order, damp_type, damping_factors)
 #ifdef VAR_MPI
+#if defined(USE_MPI_MOD_F90)
         use mpi
+#else
+        include 'mpif.h'
+#endif
 #endif
         integer, intent(in) :: comm
         real(8), intent(inout) :: field(:, :)
@@ -591,13 +599,13 @@ contains
         do ci = 1, tree%num_nodes
             node_i = tree%node_list(ci)%node
             if (.not. node_i%is_terminal) cycle
-            total_work = total_work + node_i%nleaf*node_i%particle_interactions%head
+            total_work = total_work + node_i%nleaf * node_i%particle_interactions%head
         end do
 
         ! start/stop estimates
-        ideal_work_size = total_work/mpi_size
-        ideal_work_start = mpi_rank*ideal_work_size
-        ideal_work_stop = (mpi_rank + 1)*ideal_work_size
+        ideal_work_size = total_work / mpi_size
+        ideal_work_start = mpi_rank * ideal_work_size
+        ideal_work_stop = (mpi_rank + 1) * ideal_work_size
         work_start = total_work
 
         total_work = 0
@@ -645,7 +653,7 @@ contains
                     allocate (full_damping_factors(node_j%nleaf))
                     do j = 1, node_j%nleaf
                         leaf_j = node_j%leaf(j)
-                        full_damping_factors(j) = damping_factors(leaf_i)*damping_factors(leaf_j)
+                        full_damping_factors(j) = damping_factors(leaf_i) * damping_factors(leaf_j)
                     end do
                     field(leaf_i, :) = field(leaf_i, :) + multipole_field(tree%source_multipoles(node_j%leaf(1:node_j%nleaf), :), &
                                                                           dx(1:node_j%nleaf), dy(1:node_j%nleaf), dz(1:node_j%nleaf), max_field_order, &
@@ -670,7 +678,11 @@ contains
 
     subroutine particle_fields_direct(comm, field, coordinates, multipoles, exclusions, max_field_order, damp_type, damping_factors)
 #ifdef VAR_MPI
+#if defined(USE_MPI_MOD_F90)
         use mpi
+#else
+        include 'mpif.h'
+#endif
 #endif
         integer, intent(in) :: comm
         real(8), intent(inout) :: field(:, :)
@@ -694,9 +706,9 @@ contains
         mpi_rank = 0
 #endif
         N = size(coordinates, 1)
-        work_size = N/mpi_size
-        work_start = 1 + mpi_rank*work_size
-        work_stop = (mpi_rank + 1)*work_size
+        work_size = N / mpi_size
+        work_start = 1 + mpi_rank * work_size
+        work_stop = (mpi_rank + 1) * work_size
         if (mpi_rank == mpi_size - 1) work_stop = N
 
         do i = work_start, work_stop
@@ -713,7 +725,7 @@ contains
             if (present(damp_type)) then
                 allocate (full_damping_factors(N))
                 do j = 1, N
-                    full_damping_factors(j) = damping_factors(i)*damping_factors(j)
+                    full_damping_factors(j) = damping_factors(i) * damping_factors(j)
                 end do
                 field(i, :) = field(i, :) + multipole_field(multipoles, dx, dy, dz, max_field_order, damp_type, full_damping_factors)
                 deallocate (full_damping_factors)
@@ -732,7 +744,11 @@ contains
 
     subroutine multipole_to_local(comm)
 #ifdef VAR_MPI
+#if defined(USE_MPI_MOD_F90)
         use mpi
+#else
+        include 'mpif.h'
+#endif
 #endif
         integer, intent(in) :: comm
         integer :: ci, N
@@ -750,9 +766,9 @@ contains
         mpi_rank = 0
 #endif
         N = tree%num_nodes
-        work_size = N/mpi_size
-        work_start = 1 + mpi_rank*work_size
-        work_stop = (mpi_rank + 1)*work_size
+        work_size = N / mpi_size
+        work_start = 1 + mpi_rank * work_size
+        work_stop = (mpi_rank + 1) * work_size
         if (mpi_rank == mpi_size - 1) work_stop = N
 
         do ci = work_start, work_stop
@@ -819,9 +835,9 @@ contains
                                         do sz = source_order, tz, -1
                                             if (sx + sy + sz /= source_order) cycle
                                             source_index = xyz2idx(sx, sy, sz)
-                                            prefactor = 1.0/real(factorial(sx - tx)*factorial(sy - ty)*factorial(sz - tz))
+                                            prefactor = 1.0 / real(factorial(sx - tx) * factorial(sy - ty) * factorial(sz - tz))
                                             tree%local_expansion(target_cell_indices(1:num_nodes_depth), target_index) = tree%local_expansion(target_cell_indices(1:num_nodes_depth), target_index) &
-                                                                                                                         + prefactor*tree%local_expansion(source_cell_indices(1:num_nodes_depth), source_index)*(dx**(sx - tx)*dy**(sy - ty)*dz**(sz - tz))
+                                                                                                                         + prefactor * tree%local_expansion(source_cell_indices(1:num_nodes_depth), source_index) * (dx**(sx - tx) * dy**(sy - ty) * dz**(sz - tz))
                                         end do
                                     end do
                                 end do
@@ -840,7 +856,11 @@ contains
 
     subroutine local_to_particle(comm, field, max_field_order)
 #ifdef VAR_MPI
+#if defined(USE_MPI_MOD_F90)
         use mpi
+#else
+        include 'mpif.h'
+#endif
 #endif
         integer, intent(in) :: comm
         real(8), intent(inout) :: field(:, :)
@@ -878,9 +898,9 @@ contains
             terminal_node_list(num_terminal) = node%idx
         end do
 
-        work_size = num_terminal/mpi_size
-        work_start = 1 + mpi_rank*work_size
-        work_stop = (mpi_rank + 1)*work_size
+        work_size = num_terminal / mpi_size
+        work_start = 1 + mpi_rank * work_size
+        work_stop = (mpi_rank + 1) * work_size
         if (mpi_rank == mpi_size - 1) work_stop = num_terminal
 
         do i = work_start, work_stop
@@ -900,9 +920,9 @@ contains
                                         do sz = source_order, tz, -1
                                             if (sx + sy + sz /= source_order) cycle
                                             source_index = xyz2idx(sx, sy, sz)
-                                            prefactor = 1.0/real(factorial(sx - tx)*factorial(sy - ty)*factorial(sz - tz))
+                                            prefactor = 1.0 / real(factorial(sx - tx) * factorial(sy - ty) * factorial(sz - tz))
                                             field(node%leaf(1:node%nleaf), target_index) = field(node%leaf(1:node%nleaf), target_index) &
-                                                                                           + prefactor*tree%local_expansion(node%idx, source_index)*dx**(sx - tx)*dy**(sy - ty)*dz**(sz - tz)
+                                                                                           + prefactor * tree%local_expansion(node%idx, source_index) * dx**(sx - tx) * dy**(sy - ty) * dz**(sz - tz)
                                         end do
                                     end do
                                 end do
@@ -930,7 +950,7 @@ contains
         integer, intent(in) :: field_order
         character(len=6), intent(in), optional :: damp_type
         real(8), intent(in), optional :: damping_factors(:)
-        real(8), intent(out) :: field(size(coordinates, 1), (field_order + 1)*(field_order + 2)*(field_order + 3)/6)
+        real(8), intent(out) :: field(size(coordinates, 1), (field_order + 1) * (field_order + 2) * (field_order + 3) / 6)
         real(8), pointer :: p_coordinates(:, :)
         real(8), pointer :: p_multipoles(:, :)
         p_coordinates => coordinates
@@ -953,7 +973,7 @@ contains
         integer, intent(in) :: field_order
         character(len=6), intent(in), optional :: damp_type
         real(8), intent(in), optional :: damping_factors(:)
-        real(8), intent(out) :: field(size(coordinates, 1), (field_order + 1)*(field_order + 2)*(field_order + 3)/6)
+        real(8), intent(out) :: field(size(coordinates, 1), (field_order + 1) * (field_order + 2) * (field_order + 3) / 6)
         real(8), pointer :: p_coordinates(:, :)
         real(8), pointer :: p_multipoles(:, :)
         if (size(coordinates, 1) <= ncrit) then
