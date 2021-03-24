@@ -8,6 +8,7 @@ module octree
 
     public field_direct
     public field_fmm
+    public get_multipoles
 
     type settings_type
         integer :: ncrit
@@ -941,6 +942,109 @@ contains
         end if
 #endif
     end subroutine local_to_particle
+
+    recursive subroutine classify_box(target_coordinates, theta, node, interaction_type)
+        real(8), intent(in) :: target_coordinates(:, :)
+        real(8), intent(in) :: theta
+        type(node_type), intent(inout) :: node
+        integer, intent(inout) :: interaction_type(:)
+        logical :: too_close
+        integer :: i, octant
+        real(8) :: delta(3), r
+        ! 0 -> don't use node (initial value)
+        ! 1 -> use node, box
+        ! 2 -> use node, particles
+
+        too_close = .false.
+        ! any(r*theta < box%r)?
+        do i = 1, size(target_coordinates, 1)
+            delta = target_coordinates(i, :) - node%center
+            r = norm2(delta)
+            if (r * theta < node%rmax) then
+                too_close = .true.
+            end if
+        end do
+
+        if (too_close .and. .not. node%is_terminal) then
+            ! node too close and not terminal: visit every child
+            do octant = 0, 7
+                if (node%occupied(octant)) then
+                    call classify_box(target_coordinates, theta, node%children(octant), interaction_type)
+                end if
+            end do
+        else if (too_close .and. node%is_terminal) then
+            ! node too close and terminal, use particles
+            interaction_type(node%idx) = 2
+        else
+            ! node is far away, OK to use box multipole
+            interaction_type(node%idx) = 1
+        end if
+    end subroutine classify_box
+
+    subroutine get_multipoles(comm, coordinates, multipoles, target_coordinates, theta, ncrit, expansion_order, result_coordinates, result_multipoles)
+        integer, intent(in) :: comm
+        real(8), intent(in), target :: coordinates(:, :)
+        real(8), intent(in), target :: multipoles(:, :)
+        real(8), intent(in) :: target_coordinates(:, :)
+        real(8), intent(in) :: theta
+        integer, intent(in) :: ncrit
+        integer, intent(in) :: expansion_order
+        real(8), intent(out), allocatable :: result_coordinates(:, :)
+        real(8), intent(out), allocatable :: result_multipoles(:, :)
+        real(8), pointer :: p_coordinates(:, :)
+        real(8), pointer :: p_multipoles(:, :)
+        real(8), pointer :: p_target_coordinates(:, :)
+        integer :: i, j, k, leaf, output_size
+        integer, allocatable :: interaction_type(:)
+        p_coordinates => coordinates
+        p_multipoles => multipoles
+        call octree_build(ncrit, expansion_order, theta, p_coordinates, p_multipoles)
+        call multipole_expansion(comm)
+        allocate (interaction_type(tree%num_nodes), source=0)
+        call classify_box(target_coordinates, theta, tree%root_node, interaction_type)
+        ! find dimension of output coordinates/multipoles
+        ! 0 -> don't use node
+        ! 1 -> use node, box
+        ! 2 -> use node, particles
+        output_size = 0
+        do i = 1, tree%num_nodes
+            if (interaction_type(i) == 0) then
+                continue
+            else if (interaction_type(i) == 1) then
+                output_size = output_size + 1
+            else if (interaction_type(i) == 2) then
+                output_size = output_size + tree%node_list(i)%node%nleaf
+            else
+                error stop "Wrong interaction_type"
+            end if
+        end do
+
+        if (allocated(result_coordinates)) deallocate (result_coordinates)
+        if (allocated(result_multipoles)) deallocate (result_multipoles)
+
+        allocate (result_coordinates(output_size, 3))
+        allocate (result_multipoles(output_size, (expansion_order + 1) * (expansion_order + 2) * (expansion_order + 3) / 6))
+        ! place resulting multipoles in output arrays
+        k = 1
+        do i = 1, tree%num_nodes
+            if (interaction_type(i) == 0) then
+                continue
+            else if (interaction_type(i) == 1) then
+                result_coordinates(k, :) = tree%centers(i, :)
+                result_multipoles(k, :) = tree%cell_multipoles(i, :)
+                k = k + 1
+            else if (interaction_type(i) == 2) then
+                do j = 1, tree%node_list(i)%node%nleaf
+                    leaf = tree%node_list(i)%node%leaf(j)
+                    result_coordinates(k, :) = coordinates(leaf, :)
+                    result_multipoles(k, :) = multipoles(leaf, :)
+                    k = k + 1
+                end do
+            else
+                error stop 'Wrong interaction_type'
+            end if
+        end do
+    end subroutine get_multipoles
 
     subroutine field_direct(comm, coordinates, multipoles, exclusions, field_order, field, damp_type, damping_factors)
         integer, intent(in) :: comm
