@@ -8,7 +8,6 @@ module octree
 
     public field_direct
     public field_fmm
-    public get_multipoles
 
     type settings_type
         integer :: ncrit
@@ -959,8 +958,9 @@ contains
         ! any(r*theta < box%r)?
         do i = 1, size(target_coordinates, 1)
             delta = target_coordinates(i, :) - node%center
+            delta(3) = 0.0d0
             r = norm2(delta)
-            if (r * theta < node%rmax) then
+            if (r * theta <= node%rmax) then
                 too_close = .true.
             end if
         end do
@@ -981,7 +981,7 @@ contains
         end if
     end subroutine classify_box
 
-    subroutine get_multipoles(comm, coordinates, multipoles, target_coordinates, theta, ncrit, expansion_order, result_coordinates, result_multipoles)
+    subroutine get_multipoles(comm, coordinates, multipoles, target_coordinates, theta, ncrit, expansion_order, result_coordinates, result_multipoles, result_sizes)
         integer, intent(in) :: comm
         real(8), intent(in), target :: coordinates(:, :)
         real(8), intent(in), target :: multipoles(:, :)
@@ -991,6 +991,7 @@ contains
         integer, intent(in) :: expansion_order
         real(8), intent(out), allocatable :: result_coordinates(:, :)
         real(8), intent(out), allocatable :: result_multipoles(:, :)
+        real(8), intent(out), allocatable :: result_sizes(:)
         real(8), pointer :: p_coordinates(:, :)
         real(8), pointer :: p_multipoles(:, :)
         real(8), pointer :: p_target_coordinates(:, :)
@@ -1021,9 +1022,11 @@ contains
 
         if (allocated(result_coordinates)) deallocate (result_coordinates)
         if (allocated(result_multipoles)) deallocate (result_multipoles)
+        if (allocated(result_sizes)) deallocate (result_sizes)
 
         allocate (result_coordinates(output_size, 3))
         allocate (result_multipoles(output_size, (expansion_order + 1) * (expansion_order + 2) * (expansion_order + 3) / 6))
+        allocate (result_sizes(output_size))
         ! place resulting multipoles in output arrays
         k = 1
         do i = 1, tree%num_nodes
@@ -1032,12 +1035,14 @@ contains
             else if (interaction_type(i) == 1) then
                 result_coordinates(k, :) = tree%centers(i, :)
                 result_multipoles(k, :) = tree%cell_multipoles(i, :)
+                result_sizes(k) = tree%node_list(i)%node%rmax 
                 k = k + 1
             else if (interaction_type(i) == 2) then
                 do j = 1, tree%node_list(i)%node%nleaf
                     leaf = tree%node_list(i)%node%leaf(j)
                     result_coordinates(k, :) = coordinates(leaf, :)
                     result_multipoles(k, :) = multipoles(leaf, :)
+                    result_sizes(k) = 0.0d0
                     k = k + 1
                 end do
             else
@@ -1081,7 +1086,11 @@ contains
         real(8), pointer :: p_coordinates(:, :)
         real(8), pointer :: p_multipoles(:, :)
         if (size(coordinates, 1) <= ncrit) then
-            call field_direct(comm, coordinates, multipoles, exclusions, field_order, field)
+            if (present(damp_type)) then
+                call field_direct(comm, coordinates, multipoles, exclusions, field_order, field, damp_type, damping_factors)
+            else
+                call field_direct(comm, coordinates, multipoles, exclusions, field_order, field)
+            end if
         else
             p_coordinates => coordinates
             p_multipoles => multipoles
@@ -1089,7 +1098,11 @@ contains
             call multipole_expansion(comm)
             call build_interaction_lists_fmm
             if (present(damp_type)) then
-                call particle_fields(comm, field, exclusions, field_order, damp_type, damping_factors)
+                if (damp_type /= '') then
+                    call particle_fields(comm, field, exclusions, field_order, damp_type, damping_factors)
+                else
+                    call particle_fields(comm, field, exclusions, field_order)
+                end if
             else
                 call particle_fields(comm, field, exclusions, field_order)
             end if
