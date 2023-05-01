@@ -14,6 +14,10 @@ module octree
         real(8) :: theta
         integer :: expansion_order
         integer :: multipole_size
+        logical :: is_periodic
+        integer :: num_interaction_lists ! non-periodic: 1, periodic: 27
+        integer, allocatable, dimension(:,:) :: aijk
+        real(8), dimension(3,3) :: box_matrix
     end type settings_type
 
     type list_type
@@ -34,9 +38,13 @@ module octree
         type(node_type), pointer :: children(:)
         logical :: occupied(0:7) = .FALSE.
         logical :: is_terminal = .TRUE.
-        ! data
-        type(list_type) :: particle_interactions
-        type(list_type) :: cell_interactions
+        ! interaction list - "list-of-lists" or "ragged array" 
+        ! for nonperiodic: just a list (with the 000 cell)
+        ! for periodic: 27 elements in 3x3x3 supercell:
+        !    1   2   3   4   5   6   7   8   9  10  11  12  13  14
+        ! (---,--0,--+,-0-,-00,-0+,-+-,-+0,-++,0--,0-0,0-+,00-,000,00+,0+-,0+0,0++,+--,+-0,+-+,+0-,+00,+0+,++-,++0,+++)
+        type(list_type), allocatable :: particle_interactions(:)
+        type(list_type), allocatable :: cell_interactions(:)
     end type node_type
     !             parent
     !               |
@@ -130,7 +138,7 @@ contains
         real(8), intent(in) :: theta
         real(8), intent(in), pointer :: coordinates(:, :)
         real(8), intent(in), pointer :: multipoles(:, :)
-        integer :: i
+        integer :: i, ai, aj, ak, idx
         integer :: octant
         integer :: multipole_size
         integer :: n
@@ -142,6 +150,25 @@ contains
         n = settings%expansion_order
         multipole_size = (n + 1) * (n + 2) * (n + 3) / 6
         settings%multipole_size = multipole_size
+        ! periodic data
+        if (settings%is_periodic) then 
+            settings%num_interaction_lists = 27
+            allocate(settings%aijk(27, 3)) 
+            idx = 1
+            do ai=-1,1
+                do aj=-1,1
+                    do ak=-1,1
+                        settings%aijk(idx, :) = [ai, aj, ak]
+                        idx = idx + 1
+                    end do
+                end do
+            end do
+        else
+            settings%num_interaction_lists = 1
+            allocate(settings%aijk(1, 3))
+            settings%box_matrix = 0.0d0
+            settings%aijk(1, :) = [0, 0, 0]
+        end if
 
         if (.not. associated(tree%root_node)) allocate (tree%root_node)
         tree%root_node%nleaf = 0
@@ -154,7 +181,7 @@ contains
         tree%root_node%r = max( &
                            maxval(abs(coordinates(:, 1) - tree%root_node%center(1))), &
                            maxval(abs(coordinates(:, 2) - tree%root_node%center(2))), &
-                           maxval(abs(coordinates(:, 3) - tree%root_node%center(3)))) * 1.0001
+                           maxval(abs(coordinates(:, 3) - tree%root_node%center(3)))) * 1.0000001d0
         tree%root_node%rmax = sqrt(0.5 * 3 * tree%root_node%r * tree%root_node%r)
         tree%coordinates => coordinates
         tree%source_multipoles => multipoles
@@ -288,65 +315,80 @@ contains
     end subroutine clean_node
 
     subroutine build_interaction_lists_fmm
-        integer :: i
+        integer :: i, j, k
+        k = 1
+        k = 1
         do i = 1, tree%num_nodes
             ! just temporary allocation, will be resized to fit later
-            allocate (tree%node_list(i)%node%particle_interactions%elements(64))
-            allocate (tree%node_list(i)%node%cell_interactions%elements(64))
+            allocate (tree%node_list(i)%node%particle_interactions(settings%num_interaction_lists))
+            allocate (tree%node_list(i)%node%cell_interactions(settings%num_interaction_lists))
+            do j=1, settings%num_interaction_lists
+                allocate (tree%node_list(i)%node%particle_interactions(j)%elements(64))
+                allocate (tree%node_list(i)%node%cell_interactions(j)%elements(64))
+            end do
         end do
-        call interact_fmm(tree%root_node, tree%root_node, settings%theta)
+        if (settings%is_periodic) then
+            do k=1, settings%num_interaction_lists
+                call interact_fmm(tree%root_node, tree%root_node, settings%theta, k)
+            end do
+        else
+            call interact_fmm(tree%root_node, tree%root_node, settings%theta, 1)
+        end if
         do i = 1, tree%num_nodes
-            call list_trim(tree%node_list(i)%node%particle_interactions)
-            call list_trim(tree%node_list(i)%node%cell_interactions)
+            do j=1, settings%num_interaction_lists
+                call list_trim(tree%node_list(i)%node%particle_interactions(j))
+                call list_trim(tree%node_list(i)%node%cell_interactions(j))
+            end do
         end do
     end subroutine build_interaction_lists_fmm
 
-    recursive subroutine interact_fmm(node_i, node_j, theta)
+    recursive subroutine interact_fmm(node_i, node_j, theta, k)
         type(node_type) :: node_i, node_j
         integer :: octant
         real(8) :: theta
+        integer, intent(in) :: k
         real(8) :: delta(3)
         real(8) :: r
-        delta = node_i%center - node_j%center
+        real(8) :: displacement(3)
+        logical :: is_central
+    
+        displacement = matmul(settings%box_matrix, settings%aijk(k, :))
+
+        delta = node_i%center - (node_j%center + displacement)
         r = norm2(delta)
         if (r * theta > node_i%rmax + node_j%rmax) then
             ! far field
-            call list_append(node_i%cell_interactions, node_j%idx)
+            call list_append(node_i%cell_interactions(k), node_j%idx)
         else if (node_i%is_terminal .and. node_j%is_terminal) then
             ! both are leaf nodes, and should interact directly
-            call list_append(node_i%particle_interactions, node_j%idx)
+            call list_append(node_i%particle_interactions(k), node_j%idx)
         else if (node_j%is_terminal .or. ((node_i%rmax > node_j%rmax) .and. (.not. node_i%is_terminal))) then
             ! too big, descend i
             do octant = 0, 7
                 if (node_i%occupied(octant)) then
-                    call interact_fmm(node_i%children(octant), node_j, theta)
+                    call interact_fmm(node_i%children(octant), node_j, theta, k)
                 end if
             end do
         else
             ! too big, descend j
             do octant = 0, 7
                 if (node_j%occupied(octant)) then
-                    call interact_fmm(node_i, node_j%children(octant), theta)
+                    call interact_fmm(node_i, node_j%children(octant), theta, k)
                 end if
             end do
         end if
     end subroutine interact_fmm
 
-    recursive subroutine multipole_accumulate(source_node_index, target_node_index)
-        integer, intent(in) :: source_node_index, target_node_index
-        real(8) :: delta(3)
+    subroutine multipole_accumulate_kernel(delta, source_multipoles, target_multipoles)
+        real(8), intent(in) :: delta(3)
+        real(8), dimension(:), intent(in) :: source_multipoles
+        real(8), dimension(:), intent(inout) :: target_multipoles
         integer :: source_index, source_order, sx, sy, sz
         integer :: target_index, target_order, tx, ty, tz
         real(8) :: symfac
         integer :: max_multipole_order
         real(8) :: monomial
-
-        if (tree%node_list(target_node_index)%node%idx /= 1) then
-            call multipole_accumulate(source_node_index, tree%node_list(target_node_index)%node%parent%idx)
-        end if
-        delta = tree%centers(source_node_index, :) - tree%centers(target_node_index, :)
         max_multipole_order = NINT((size(tree%cell_multipoles, 2) * 6)**(1./3.)) - 2
-
         do source_order = 0, max_multipole_order
             do target_order = source_order, settings%expansion_order
                 do sx = source_order, 0, -1
@@ -359,12 +401,10 @@ contains
                                     do tz = target_order, sz, -1
                                         if (tx + ty + tz /= target_order) cycle
                                         target_index = xyz2idx(tx, ty, tz)
-                                        ! unsure about this ....
-                                        ! maybe needs symmetry factor?
                                         symfac = binom(tx, sx) * binom(ty, sy) * binom(tz, sz)
                                         monomial = delta(1)**(tx - sx) * delta(2)**(ty - sy) * delta(3)**(tz - sz)
-                                        tree%cell_multipoles(target_node_index, target_index) = tree%cell_multipoles(target_node_index, target_index) &
-                                                                                                + symfac * monomial * tree%cell_multipoles(source_node_index, source_index)
+                                        target_multipoles(target_index) = target_multipoles(target_index) &
+                                                                        + symfac * monomial * source_multipoles(source_index)
                                     end do
                                 end do
                             end do
@@ -373,6 +413,18 @@ contains
                 end do
             end do
         end do
+    end subroutine multipole_accumulate_kernel
+
+    recursive subroutine multipole_accumulate(source_node_index, target_node_index)
+        integer, intent(in) :: source_node_index, target_node_index
+        real(8) :: delta(3)
+
+        if (tree%node_list(target_node_index)%node%idx /= 1) then
+            call multipole_accumulate(source_node_index, tree%node_list(target_node_index)%node%parent%idx)
+        end if
+        delta = tree%centers(source_node_index, :) - tree%centers(target_node_index, :)
+        call multipole_accumulate_kernel(delta, tree%cell_multipoles(source_node_index, :), &
+                                                tree%cell_multipoles(target_node_index, :))
     end subroutine multipole_accumulate
 
     subroutine shift_multipole_vec(source_multipole, target_multipole, dx, dy, dz)
@@ -584,6 +636,9 @@ contains
         integer :: work_start, work_stop, work_idx, N, total_work
         integer :: ideal_work_size, ideal_work_start, ideal_work_stop
         logical :: set_work_start, set_work_stop
+        integer :: periodic_index
+        logical :: central
+        real(8), dimension(3) :: displacement
 #ifdef VAR_MPI
         call mpi_comm_size(comm, mpi_size, ierr)
         call mpi_comm_rank(comm, mpi_rank, ierr)
@@ -595,74 +650,81 @@ contains
         allocate (work_node_list(N))
         allocate (work_leaf_list(N))
         ! get total work estimate
-        total_work = 0
-        do ci = 1, tree%num_nodes
-            node_i = tree%node_list(ci)%node
-            if (.not. node_i%is_terminal) cycle
-            total_work = total_work + node_i%nleaf * node_i%particle_interactions%head
-        end do
-
-        ! start/stop estimates
-        ideal_work_size = total_work / mpi_size
-        ideal_work_start = mpi_rank * ideal_work_size
-        ideal_work_stop = (mpi_rank + 1) * ideal_work_size
-        work_start = total_work
-
-        total_work = 0
-        work_idx = 1
-        set_work_start = .true.
-        set_work_stop = .true.
-        do ci = 1, tree%num_nodes
-            node_i = tree%node_list(ci)%node
-            if (.not. node_i%is_terminal) cycle
-            do j = 1, node_i%nleaf
-                if (total_work >= ideal_work_start .and. set_work_start) then
-                    work_start = work_idx
-                    set_work_start = .false.
-                end if
-                if (total_work >= ideal_work_stop .and. set_work_stop) then
-                    work_stop = work_idx - 1
-                    set_work_stop = .false.
-                end if
-                work_leaf_list(work_idx) = node_i%leaf(j)
-                work_node_list(work_idx) = node_i%idx
-                work_idx = work_idx + 1
-                total_work = total_work + node_i%particle_interactions%head
+        do periodic_index = 1, settings%num_interaction_lists
+            displacement = matmul(settings%box_matrix, settings%aijk(periodic_index, :))
+            central = .false.
+            if (all(settings%aijk(periodic_index, :) == 0)) central = .true.
+            total_work = 0
+            do ci = 1, tree%num_nodes
+                node_i = tree%node_list(ci)%node
+                if (.not. node_i%is_terminal) cycle
+                total_work = total_work + node_i%nleaf * (node_i%particle_interactions(periodic_index)%head - 1)
             end do
-        end do
-        if (mpi_rank == mpi_size - 1) work_stop = N
+            if (total_work == 0) cycle
 
-        do ci = work_start, work_stop
-            node_i = tree%node_list(work_node_list(ci))%node
-            particle_list = node_i%particle_interactions
-            leaf_i = work_leaf_list(ci)
-            do cj = 1, size(particle_list%elements)
-                node_j = tree%node_list(particle_list%elements(cj))%node
-                dx(1:node_j%nleaf) = tree%coordinates(leaf_i, 1) - tree%coordinates(node_j%leaf(1:node_j%nleaf), 1)
-                dy(1:node_j%nleaf) = tree%coordinates(leaf_i, 2) - tree%coordinates(node_j%leaf(1:node_j%nleaf), 2)
-                dz(1:node_j%nleaf) = tree%coordinates(leaf_i, 3) - tree%coordinates(node_j%leaf(1:node_j%nleaf), 3)
-                do j = 1, node_j%nleaf
-                    leaf_j = node_j%leaf(j)
-                    if (any(exclusions(leaf_i, :) == leaf_j)) then
-                        dx(j) = 1d10 ! T(x,y,z) -> 0. as x,y,z -> large numbers
-                        dy(j) = 1d10 ! a bit of a hacky way to do exclusions
-                        dz(j) = 1d10 ! but makes it easy to pass the entire vector into multipole_field
+            ! start/stop estimates
+            ideal_work_size = total_work / mpi_size
+            ideal_work_start = mpi_rank * ideal_work_size
+            ideal_work_stop = (mpi_rank + 1) * ideal_work_size
+            work_start = total_work
+
+            total_work = 0
+            work_idx = 1
+            set_work_start = .true.
+            set_work_stop = .true.
+            do ci = 1, tree%num_nodes
+                node_i = tree%node_list(ci)%node
+                if (.not. node_i%is_terminal) cycle
+                do j = 1, node_i%nleaf
+                    if (total_work >= ideal_work_start .and. set_work_start) then
+                        work_start = work_idx
+                        set_work_start = .false.
                     end if
+                    if (total_work >= ideal_work_stop .and. set_work_stop) then
+                        work_stop = work_idx - 1
+                        set_work_stop = .false.
+                    end if
+                    work_leaf_list(work_idx) = node_i%leaf(j)
+                    work_node_list(work_idx) = node_i%idx
+                    work_idx = work_idx + 1
+                    total_work = total_work + (node_i%particle_interactions(periodic_index)%head - 1)
                 end do
-                if (present(damp_type)) then
-                    allocate (full_damping_factors(node_j%nleaf))
+            end do
+            if (mpi_rank == mpi_size - 1) work_stop = N
+
+            do ci = work_start, work_stop
+                node_i = tree%node_list(work_node_list(ci))%node
+                particle_list = node_i%particle_interactions(periodic_index)
+                leaf_i = work_leaf_list(ci)
+                if (size(particle_list%elements) == 0) cycle
+                do cj = 1, size(particle_list%elements)
+                    node_j = tree%node_list(particle_list%elements(cj))%node
+                    dx(1:node_j%nleaf) = tree%coordinates(leaf_i, 1) - (tree%coordinates(node_j%leaf(1:node_j%nleaf), 1) + displacement(1))
+                    dy(1:node_j%nleaf) = tree%coordinates(leaf_i, 2) - (tree%coordinates(node_j%leaf(1:node_j%nleaf), 2) + displacement(2))
+                    dz(1:node_j%nleaf) = tree%coordinates(leaf_i, 3) - (tree%coordinates(node_j%leaf(1:node_j%nleaf), 3) + displacement(3))
                     do j = 1, node_j%nleaf
                         leaf_j = node_j%leaf(j)
-                        full_damping_factors(j) = damping_factors(leaf_i) * damping_factors(leaf_j)
+                        if (any(exclusions(leaf_i, :) == leaf_j) .and. central) then
+                            dx(j) = 1d10 ! T(x,y,z) -> 0. as x,y,z -> large numbers
+                            dy(j) = 1d10 ! a bit of a hacky way to do exclusions
+                            dz(j) = 1d10 ! but makes it easy to pass the entire vector into multipole_field
+                        end if
                     end do
-                    field(leaf_i, :) = field(leaf_i, :) + multipole_field(tree%source_multipoles(node_j%leaf(1:node_j%nleaf), :), &
-                                                                          dx(1:node_j%nleaf), dy(1:node_j%nleaf), dz(1:node_j%nleaf), max_field_order, &
-                                                                          damp_type, full_damping_factors)
-                    deallocate (full_damping_factors)
-                else
-                    field(leaf_i, :) = field(leaf_i, :) + multipole_field(tree%source_multipoles(node_j%leaf(1:node_j%nleaf), :), &
-                                                                          dx(1:node_j%nleaf), dy(1:node_j%nleaf), dz(1:node_j%nleaf), max_field_order)
-                end if
+                    if (present(damp_type)) then
+                        allocate (full_damping_factors(node_j%nleaf))
+                        do j = 1, node_j%nleaf
+                            leaf_j = node_j%leaf(j)
+                            full_damping_factors(j) = damping_factors(leaf_i) * damping_factors(leaf_j)
+                        end do
+                        field(leaf_i, :) = field(leaf_i, :) + multipole_field(tree%source_multipoles(node_j%leaf(1:node_j%nleaf), :), &
+                                                                              dx(1:node_j%nleaf), dy(1:node_j%nleaf), dz(1:node_j%nleaf), max_field_order, &
+                                                                              damp_type, full_damping_factors)
+                        deallocate (full_damping_factors)
+                    else
+                        field(leaf_i, :) = field(leaf_i, :) + multipole_field(tree%source_multipoles(node_j%leaf(1:node_j%nleaf), :), &
+                                                                              dx(1:node_j%nleaf), dy(1:node_j%nleaf), dz(1:node_j%nleaf), max_field_order)
+                    end if
+                end do
             end do
         end do
         deallocate (work_node_list)
@@ -711,6 +773,7 @@ contains
         work_stop = (mpi_rank + 1) * work_size
         if (mpi_rank == mpi_size - 1) work_stop = N
 
+
         do i = work_start, work_stop
             dx = coordinates(i, 1) - coordinates(:, 1)
             dy = coordinates(i, 2) - coordinates(:, 2)
@@ -757,6 +820,8 @@ contains
         type(list_type) :: cell_list
         integer :: work_start, work_stop, work_size
         integer :: mpi_rank, mpi_size, ierr
+        integer :: periodic_index
+        real(8) :: displacement(3)
         allocate (tree%local_expansion(tree%num_nodes, settings%multipole_size), source=0.0D0)
 #ifdef VAR_MPI
         call mpi_comm_size(comm, mpi_size, ierr)
@@ -771,26 +836,135 @@ contains
         work_stop = (mpi_rank + 1) * work_size
         if (mpi_rank == mpi_size - 1) work_stop = N
 
-        do ci = work_start, work_stop
-            node_i = tree%node_list(ci)%node
-            cell_list = node_i%cell_interactions
-            N = size(cell_list%elements)
-            allocate (dx(N))
-            allocate (dy(N))
-            allocate (dz(N))
-            dx = node_i%center(1) - tree%centers(cell_list%elements, 1)
-            dy = node_i%center(2) - tree%centers(cell_list%elements, 2)
-            dz = node_i%center(3) - tree%centers(cell_list%elements, 3)
-            tree%local_expansion(node_i%idx, :) = tree%local_expansion(node_i%idx, :) + &
-                                                  multipole_field(tree%cell_multipoles(cell_list%elements, :), dx, dy, dz, settings%expansion_order)
-            deallocate (dx)
-            deallocate (dy)
-            deallocate (dz)
+        do periodic_index=1, settings%num_interaction_lists
+            displacement = matmul(settings%box_matrix, settings%aijk(periodic_index, :))
+            do ci = work_start, work_stop
+                node_i = tree%node_list(ci)%node
+                cell_list = node_i%cell_interactions(periodic_index)
+                N = size(cell_list%elements)
+                allocate (dx(N))
+                allocate (dy(N))
+                allocate (dz(N))
+                dx = node_i%center(1) - (tree%centers(cell_list%elements, 1) + displacement(1))
+                dy = node_i%center(2) - (tree%centers(cell_list%elements, 2) + displacement(2))
+                dz = node_i%center(3) - (tree%centers(cell_list%elements, 3) + displacement(3))
+                tree%local_expansion(node_i%idx, :) = tree%local_expansion(node_i%idx, :) + &
+                                                      multipole_field(tree%cell_multipoles(cell_list%elements, :), dx, dy, dz, settings%expansion_order)
+                deallocate (dx)
+                deallocate (dy)
+                deallocate (dz)
+            end do
         end do
 #ifdef VAR_MPI
         call mpi_allreduce(MPI_IN_PLACE, tree%local_expansion(1, 1), size(tree%local_expansion), MPI_REAL8, MPI_SUM, comm, ierr)
 #endif
     end subroutine multipole_to_local
+
+    subroutine periodic_sum(comm)
+#ifdef var_mpi
+#if defined(use_mpi_mod_f90)
+        use mpi
+#else
+        include 'mpif.h'
+#endif
+#endif
+        integer, intent(in) :: comm
+        integer :: ai, aj, ak, bi, bj, bk, multipole_size, k, level, j, i
+        real(8) :: aijk(3), bijk(3)
+        real(8), allocatable :: cell_multipoles(:,:), cell_multipoles_scaled(:), contribution(:)
+        real(8) :: d_aijk(3), d_bijk(3)
+        real(8), dimension(26*27) :: dx, dy, dz
+        real(8), parameter :: tol_periodic = 1.0d-10
+        integer, parameter :: limit = 50
+        type(node_type), pointer :: node
+        ! scale up to next 3x3x3 supercell
+        ! loop over 26 neighbors to the central cell and get contributions from 27 subcells onto central cell
+        multipole_size = size(tree%cell_multipoles, 2)
+        ! force charge neutrality
+        tree%cell_multipoles(1,1) = 0.0d0
+        allocate(cell_multipoles(26*27, multipole_size))
+        allocate(cell_multipoles_scaled(multipole_size))
+        allocate(contribution(size(tree%local_expansion, 2)))
+        do k=1, 26*27
+            cell_multipoles(k, :) = tree%cell_multipoles(tree%root_node%idx, :)
+        end do
+        cell_multipoles_scaled = cell_multipoles(1, :)
+        do level=1, limit
+            !if (level == limit) error stop "periodic sum did not converge"
+            k = 1
+            do ai=-1,1
+                do aj=-1,1
+                    do ak=-1,1
+                        if (ai == 0 .and. aj == 0 .and. ak == 0) cycle
+                        ! accumulate for next scaled multipole
+                        aijk = [ai*3.0d0**level, aj*3.0d0**level, ak*3.0d0**level]
+                        d_aijk = matmul(settings%box_matrix, aijk)
+                        call multipole_accumulate_kernel(d_aijk/3.0d0, &
+                                                         cell_multipoles(1,:), &
+                                                         cell_multipoles_scaled)
+                        ! get positions of the 27 subcells
+                        do bi=-1,1
+                            do bj=-1,1
+                                do bk=-1,1
+                                    bijk = [bi*3.0d0**(level-1), bj*3.0d0**(level-1), bk*3.0d0**(level-1)]
+                                    d_bijk = matmul(settings%box_matrix, bijk)
+                                    dx(k) = d_aijk(1) + d_bijk(1)
+                                    dy(k) = d_aijk(2) + d_bijk(2)
+                                    dz(k) = d_aijk(3) + d_bijk(3)
+                                    k = k + 1
+                                end do
+                            end do
+                        end do
+                    end do
+                end do
+            end do
+            ! m2p barnes-hut like step
+            ! dx, dy, dz are distances from root cell to image cells
+            ! do i=1, size(field, 1)
+            !     delta = tree%coordinates(i,:) - tree%root_node%center
+            !     contribution = multipole_field(cell_multipoles, dx+delta(1), dy+delta(2), dz+delta(3), max_field_order)
+            !     field(i, :) = field(i,:) + contribution
+            !     contribution_tracker = contribution_tracker + abs(contribution)
+            ! end do
+            contribution = multipole_field(cell_multipoles, dx, dy, dz, settings%expansion_order)
+            tree%local_expansion(tree%root_node%idx, :) = tree%local_expansion(tree%root_node%idx, :) + contribution
+
+            do k=1, 26*27
+                cell_multipoles(k, :) = cell_multipoles_scaled(:)
+            end do
+            !print *, 'periodic sum: level, norm2(contribution)', level, norm2(contribution(2:))
+            if (norm2(contribution(2:)) < tol_periodic) exit
+        end do
+    end subroutine periodic_sum
+
+    subroutine dipole_correction(comm, field, max_field_order)
+        integer, intent(in) :: comm
+        real(8), intent(inout) :: field(:, :)
+        integer, intent(in) :: max_field_order
+        real(8) :: volume, dipole(3), quadrupole_trace
+        real(8) :: h(3,3)
+        integer :: i
+        h(:,:) = settings%box_matrix
+        volume = h(1,1)*(h(2,2)*h(3,3) - h(2,3)*h(3,2)) &
+               - h(1,2)*(h(2,1)*h(3,3) - h(2,3)*h(3,1)) &
+               + h(1,3)*(h(1,2)*h(3,2) - h(2,2)*h(3,1))
+        dipole = tree%cell_multipoles(tree%root_node%idx, 2:4)
+        quadrupole_trace = tree%cell_multipoles(tree%root_node%idx, 5) &
+                         + tree%cell_multipoles(tree%root_node%idx, 8) &
+                         + tree%cell_multipoles(tree%root_node%idx, 10)
+        ! correction to the potential
+        
+        do i=1, size(field, 1)
+            field(i, 1) = field(i, 1) + 4.0d0 * 3.14159265359d0 * sum(dipole*tree%coordinates(i,:)) / (3.0d0 * volume) &
+                        + 2.0d0*3.14159265359d0*quadrupole_trace/(3.0d0 * volume) !? 
+        end do
+        if (max_field_order >= 1) then
+            do i=1, size(field, 1)
+                field(i, 2:4) = field(i, 2:4) + 4.0d0 * 3.14159265359d0 * dipole / (3.0d0 * volume)
+            end do
+        end if
+        
+    end subroutine dipole_correction
 
     subroutine local_to_local
         integer :: i, num_nodes_depth, depth
@@ -1071,7 +1245,8 @@ contains
         end if
     end subroutine field_direct
 
-    subroutine field_fmm(comm, coordinates, multipoles, exclusions, theta, ncrit, expansion_order, field_order, field, damp_type, damping_factors)
+    subroutine field_fmm(comm, coordinates, multipoles, exclusions, theta, ncrit, expansion_order, field_order, field, &
+            damp_type, damping_factors, box_matrix)
         integer, intent(in) :: comm
         real(8), intent(in), target :: coordinates(:, :)
         real(8), intent(in), target :: multipoles(:, :)
@@ -1082,9 +1257,18 @@ contains
         integer, intent(in) :: field_order
         character(len=6), intent(in), optional :: damp_type
         real(8), intent(in), optional :: damping_factors(:)
+        real(8), intent(in), optional :: box_matrix(3,3)
         real(8), intent(out) :: field(size(coordinates, 1), (field_order + 1) * (field_order + 2) * (field_order + 3) / 6)
         real(8), pointer :: p_coordinates(:, :)
         real(8), pointer :: p_multipoles(:, :)
+        
+        if (present(box_matrix)) then
+            settings%is_periodic = .true.
+            settings%box_matrix = box_matrix
+        else
+            settings%is_periodic = .false.
+        end if
+
         if (size(coordinates, 1) <= ncrit) then
             if (present(damp_type)) then
                 call field_direct(comm, coordinates, multipoles, exclusions, field_order, field, damp_type, damping_factors)
@@ -1107,6 +1291,10 @@ contains
                 call particle_fields(comm, field, exclusions, field_order)
             end if
             call multipole_to_local(comm)
+            if (settings%is_periodic) then
+                call periodic_sum(comm)
+                call dipole_correction(comm, field, field_order)
+            end if
             call local_to_local
             call local_to_particle(comm, field, field_order)
             call finalize
