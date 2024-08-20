@@ -1,18 +1,38 @@
+!
+!   Copyright (C) The PE library developers. See the CONTRIBUTORS file
+!                 in the top-level directory of this distribution.
+!
+!   This file is part of the PE library.
+!
+!   The PE library is free software: you can redistribute it and/or modify
+!   it under the terms of the GNU Lesser General Public License as
+!   published by the Free Software Foundation, either version 3 of the
+!   License, or (at your option) any later version.
+!
+!   The PE library is distributed in the hope that it will be useful,
+!   but WITHOUT ANY WARRANTY; without even the implied warranty of
+!   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+!   GNU Lesser General Public License for more details.
+!
+!   You should have received a copy of the GNU Lesser General Public License
+!   along with the PE library. If not, see <http://www.gnu.org/licenses/>.
+!
 module tensors_recursive
+    use precision
     implicit none
     private
 
     public Tn_recursive
-    real(8), dimension(:, :, :), allocatable, save :: Cnij
-    integer, save :: current_Cnij_order = 0
+    integer(ip), dimension(:, :, :), allocatable, save :: Cnij
+    integer(ip), save :: current_Cnij_order = 0
 contains
     function Txyz(kx, ky, kz, x_powers, y_powers, z_powers, inv_R_power) result(T)
-        integer, intent(in) :: kx, ky, kz
-        real(8), intent(in) :: x_powers(:, :), y_powers(:, :), z_powers(:, :), inv_R_power(:)
-        real(8), allocatable :: T(:)
-        integer :: a, b, c
-        real(8), allocatable :: Cx(:), Cy(:), Cz(:)
-        real(8) :: Cnij_factor
+        integer(ip), intent(in) :: kx, ky, kz
+        real(rp), intent(in) :: x_powers(:, :), y_powers(:, :), z_powers(:, :), inv_R_power(:)
+        real(rp), allocatable :: T(:)
+        integer(ip) :: a, b, c
+        real(rp), allocatable :: Cx(:), Cy(:), Cz(:)
+        integer(ip) :: Cnij_factor
 
         allocate (T(size(inv_R_power)))
         T(:) = 0.0
@@ -24,26 +44,26 @@ contains
         do a = 0, kx
             Cnij_factor = Cnij(1, kx, a)
             if (Cnij_factor == 0) cycle
-            Cx = Cnij_factor * x_powers(:, a + 1)
+            Cx(:) = real(Cnij_factor, rp) * x_powers(:, a + 1)
             do b = 0, ky
                 Cnij_factor = Cnij(a + kx + 1, ky, b)
                 if (Cnij_factor == 0) cycle
-                Cy = Cx * Cnij_factor * y_powers(:, b + 1)
+                Cy(:) = Cx * real(Cnij_factor, rp) * y_powers(:, b + 1)
                 do c = 0, kz
                     Cnij_factor = Cnij(a + kx + b + ky + 1, kz, c)
                     if (Cnij_factor == 0) cycle
-                    Cz = Cy * Cnij_factor * z_powers(:, c + 1)
-                    T = T + Cz
+                    Cz(:) = Cy * real(Cnij_factor, rp) * z_powers(:, c + 1)
+                    T(:) = T + Cz
                 end do
             end do
         end do
 
-        T = T * inv_R_power
+        T(:) = T * inv_R_power
     end function Txyz
 
     subroutine set_Cnij_coefficients(max_order)
-        integer, intent(in) :: max_order
-        integer :: i, j, k, n
+        integer(ip), intent(in) :: max_order
+        integer(ip) :: i, j, k, n
         if (allocated(Cnij)) deallocate (Cnij)
         allocate (Cnij(2 * max_order + 3, 0:max_order + 1, 0:max_order + 1))
         Cnij = 0
@@ -73,12 +93,12 @@ contains
     end subroutine set_Cnij_coefficients
 
     subroutine Tn_recursive(nmax, x, y, z, T)
-        integer, intent(in) :: nmax
-        real(8), intent(in) :: x(:), y(size(x)), z(size(x))
-        real(8), intent(inout) :: T(size(x), (nmax + 1) * (nmax + 2) * (nmax + 3) / 6)
-        integer :: i, kx, ky, kz, n
-        real(8), allocatable :: x_powers(:, :), y_powers(:, :), z_powers(:, :) ! powers (x/R)**k
-        real(8), allocatable :: R(:), inv_R_power(:)                           ! R, 1/R**n
+        integer(ip), intent(in) :: nmax
+        real(rp), intent(in) :: x(:), y(size(x)), z(size(x))
+        real(rp), intent(inout) :: T(size(x), (nmax + 1) * (nmax + 2) * (nmax + 3) / 6)
+        integer(ip) :: i, kx, ky, kz, n
+        real(rp), allocatable :: x_powers(:, :), y_powers(:, :), z_powers(:, :) ! powers (x/R)**k
+        real(rp), allocatable :: R(:), inv_R_power(:)                           ! R, 1/R**n
 
         if (current_Cnij_order < nmax) then
             call set_Cnij_coefficients(nmax)
@@ -91,7 +111,7 @@ contains
         allocate (y_powers(size(x), 1:nmax + 1))
         allocate (z_powers(size(x), 1:nmax + 1))
 
-        R = sqrt(x**2 + y**2 + z**2)
+        R(:) = sqrt(x**2+y**2+z**2)
         x_powers(:, 1) = 1.0 ! (x/R)**0 = 1.0
         y_powers(:, 1) = 1.0 ! (y/R)**0 = 1.0
         z_powers(:, 1) = 1.0 ! (z/R)**0 = 1.0
@@ -103,7 +123,7 @@ contains
 
         i = 1
         do n = 0, nmax
-            inv_R_power = 1 / R**(n + 1)
+            inv_R_power(:) = 1 / R**(n + 1)
             do kx = n, 0, -1
                 do ky = n - kx, 0, -1
                     kz = n - kx - ky

@@ -5,6 +5,7 @@ include(GNUInstallDirs)
 option(ENABLE_PYTHON_INTERFACE "Builds Python bindings using f2py" OFF)
 
 SET(SOURCES 
+    src/precision.F90
 	src/fmm.F90 
 	src/tensors.F90 
 	src/tensors_recursive.F90
@@ -13,7 +14,7 @@ SET(SOURCES
 	src/tensors_damped_thole.F90 
 	)
 
-set(Fortran_FLAGS "-ffree-line-length-none -Ofast -mtune=native")
+set(Fortran_FLAGS "-ffree-line-length-none -O1 -g")
 set(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} ${Fortran_FLAGS}")
 add_library(fmm SHARED ${SOURCES})
 

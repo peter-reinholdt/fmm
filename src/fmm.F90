@@ -1,4 +1,5 @@
-module octree
+module fmm
+    use precision
     use t_tensor
     use t_tensor_damp_thole
     use t_tensor_damp_amoeba
@@ -8,36 +9,37 @@ module octree
 
     public field_direct
     public field_fmm
+    public get_multipoles, get_boxes, interpolate_electron_fields
 
     type settings_type
-        integer :: ncrit
-        real(8) :: theta
-        integer :: expansion_order
-        integer :: multipole_size
+        integer(ip) :: ncrit
+        real(rp) :: theta
+        integer(ip) :: expansion_order
+        integer(ip) :: multipole_size
         logical :: is_periodic
         integer :: num_interaction_lists ! non-periodic: 1, periodic: 27
         integer, allocatable, dimension(:,:) :: aijk
-        real(8), dimension(3,3) :: box_matrix
+        real(rp), dimension(3,3) :: box_matrix
     end type settings_type
 
     type list_type
-        integer :: head = 1
-        integer, allocatable :: elements(:)
+        integer(ip) :: head = 1
+        integer(ip), allocatable :: elements(:)
     end type list_type
 
     type node_type
         ! tree things
-        integer :: idx
-        integer :: depth
-        integer :: nleaf
-        integer, allocatable :: leaf(:)
-        real(8) :: center(3)
-        real(8) :: r
-        real(8) :: rmax
+        integer(ip) :: idx
+        integer(ip) :: depth
+        integer(ip) :: nleaf
+        integer(ip), allocatable :: leaf(:)
+        real(rp) :: center(3)
+        real(rp) :: r
+        real(rp) :: rmax
         type(node_type), pointer :: parent
         type(node_type), pointer :: children(:)
-        logical :: occupied(0:7) = .FALSE.
-        logical :: is_terminal = .TRUE.
+        logical(lp) :: occupied(0:7) = .FALSE.
+        logical(lp) :: is_terminal = .TRUE.
         ! interaction list - "list-of-lists" or "ragged array" 
         ! for nonperiodic: just a list (with the 000 cell)
         ! for periodic: 27 elements in 3x3x3 supercell:
@@ -59,15 +61,15 @@ module octree
     end type node_list_type
 
     type tree_type
-        real(8), pointer :: coordinates(:, :)
-        real(8), pointer :: source_multipoles(:, :)
+        real(rp), pointer :: coordinates(:, :)
+        real(rp), pointer :: source_multipoles(:, :)
         type(node_type), pointer :: root_node
-        integer :: num_nodes
-        integer :: max_depth
+        integer(ip) :: num_nodes
+        integer(ip) :: max_depth
         type(node_list_type), allocatable :: node_list(:)
-        real(8), allocatable :: centers(:, :)
-        real(8), allocatable :: cell_multipoles(:, :)
-        real(8), allocatable :: local_expansion(:, :)
+        real(rp), allocatable :: centers(:, :)
+        real(rp), allocatable :: cell_multipoles(:, :)
+        real(rp), allocatable :: local_expansion(:, :)
     end type tree_type
 
     type(settings_type) settings
@@ -77,9 +79,9 @@ contains
 
     pure function xyz2idx(x, y, z) result(idx)
         implicit none
-        integer, intent(in) :: x, y, z
-        integer :: k
-        integer :: idx
+        integer(ip), intent(in) :: x, y, z
+        integer(ip) :: k
+        integer(ip) :: idx
         k = x + y + z
         ! number of components before order k is k*(k+1)*(k+2)/6
         ! (y**2 + 2*y*z + y + z**2 + 3*z)/2 + 1 is the symmetry-packed index of the current slice
@@ -87,31 +89,31 @@ contains
     end function xyz2idx
 
     pure function factorial(n)
-        integer, intent(in) :: n
-        integer :: i
-        real(8) :: factorial
+        integer(ip), intent(in) :: n
+        integer(ip) :: i
+        real(rp) :: factorial
         factorial = 1
         do i = n, 1, -1
-            factorial = factorial * i
+            factorial = factorial * real(i, rp)
         end do
     end function
 
     pure function trinom(i, j, k)
-        integer, intent(in) :: i, j, k
-        real(8) :: trinom
+        integer(ip), intent(in) :: i, j, k
+        real(rp) :: trinom
         trinom = factorial(i + j + k) / (factorial(i) * factorial(j) * factorial(k))
     end function trinom
 
     pure function binom(n, k)
-        integer, intent(in) :: n, k
-        real(8) :: binom
+        integer(ip), intent(in) :: n, k
+        real(rp) :: binom
         binom = factorial(n) / (factorial(k) * factorial(n - k))
     end function binom
 
     subroutine list_append(list, element)
         type(list_type), intent(inout) :: list
-        integer, intent(in) :: element
-        integer, allocatable :: swap(:)
+        integer(ip), intent(in) :: element
+        integer(ip), allocatable :: swap(:)
         if (list%head > size(list%elements)) then
             allocate (swap(list%head))
             call move_alloc(list%elements, swap)
@@ -125,7 +127,7 @@ contains
 
     subroutine list_trim(list)
         type(list_type), intent(inout) :: list
-        integer, allocatable :: swap(:)
+        integer(ip), allocatable :: swap(:)
         call move_alloc(list%elements, swap)
         allocate (list%elements(1:list%head - 1))
         list%elements(1:list%head - 1) = swap(1:list%head - 1)
@@ -133,15 +135,15 @@ contains
     end subroutine list_trim
 
     subroutine octree_build(ncrit, expansion_order, theta, coordinates, multipoles)
-        integer, intent(in) :: ncrit
-        integer, intent(in) :: expansion_order
-        real(8), intent(in) :: theta
-        real(8), intent(in), pointer :: coordinates(:, :)
-        real(8), intent(in), pointer :: multipoles(:, :)
-        integer :: i, ai, aj, ak, idx
-        integer :: octant
-        integer :: multipole_size
-        integer :: n
+        integer(ip), intent(in) :: ncrit
+        integer(ip), intent(in) :: expansion_order
+        real(rp), intent(in) :: theta
+        real(rp), intent(in), pointer :: coordinates(:, :)
+        real(rp), intent(in), pointer :: multipoles(:, :)
+        integer(ip) :: i, ai, aj, ak, idx
+        integer(ip) :: octant
+        integer(ip) :: multipole_size
+        integer(ip) :: n
         type(node_type), pointer :: node
 
         settings%ncrit = ncrit
@@ -158,7 +160,9 @@ contains
             do ai=-1,1
                 do aj=-1,1
                     do ak=-1,1
-                        settings%aijk(idx, :) = [ai, aj, ak]
+                        settings%aijk(idx, 1) = ai
+                        settings%aijk(idx, 2) = aj
+                        settings%aijk(idx, 3) = ak
                         idx = idx + 1
                     end do
                 end do
@@ -166,7 +170,7 @@ contains
         else
             settings%num_interaction_lists = 1
             allocate(settings%aijk(1, 3))
-            settings%box_matrix = 0.0d0
+            settings%box_matrix = 0.0_rp
             settings%aijk(1, :) = [0, 0, 0]
         end if
 
@@ -177,11 +181,11 @@ contains
         nullify (tree%root_node%parent)
         tree%num_nodes = 1
         tree%root_node%depth = 1
-        tree%root_node%center = sum(coordinates, 1) / size(coordinates, 1)
+        tree%root_node%center = sum(coordinates, 1) / real(size(coordinates, 1), rp)
         tree%root_node%r = max( &
                            maxval(abs(coordinates(:, 1) - tree%root_node%center(1))), &
                            maxval(abs(coordinates(:, 2) - tree%root_node%center(2))), &
-                           maxval(abs(coordinates(:, 3) - tree%root_node%center(3)))) * 1.0000001d0
+                           maxval(abs(coordinates(:, 3) - tree%root_node%center(3)))) * 1.0001_rp
         tree%root_node%rmax = sqrt(0.5 * 3 * tree%root_node%r * tree%root_node%r)
         tree%coordinates => coordinates
         tree%source_multipoles => multipoles
@@ -216,9 +220,9 @@ contains
 
     subroutine add_child(node, octant)
         type(node_type), intent(inout), target :: node
-        integer, intent(in) :: octant
-        real(8) :: r
-        real(8) :: center(3)
+        integer(ip), intent(in) :: octant
+        real(rp) :: r
+        real(rp) :: center(3)
 
         tree%num_nodes = tree%num_nodes + 1
         node%occupied(octant) = .TRUE.
@@ -226,9 +230,9 @@ contains
 
         r = node%r * 0.5
         center = node%center
-        center(1) = center(1) + r * (IAND(octant, 1) * 2 - 1)
-        center(2) = center(2) + r * (IAND(octant, 2) - 1)
-        center(3) = center(3) + r * (IAND(octant, 4) / 2 - 1)
+        center(1) = center(1) + r * real((IAND(octant, 1) * 2 - 1), rp)
+        center(2) = center(2) + r * real((IAND(octant, 2) - 1), rp)
+        center(3) = center(3) + r * real((IAND(octant, 4) / 2 - 1), rp)
 
         node%children(octant)%r = r
         node%children(octant)%rmax = sqrt(0.5 * 3 * r * r)
@@ -242,9 +246,9 @@ contains
 
     recursive subroutine split_node(node)
         type(node_type), intent(inout), target :: node
-        integer :: i
-        integer :: leaf
-        integer :: octant
+        integer(ip) :: i
+        integer(ip) :: leaf
+        integer(ip) :: octant
         do i = 1, node%nleaf
             leaf = node%leaf(i)
             octant = 0
@@ -269,7 +273,7 @@ contains
     end subroutine split_node
 
     subroutine create_node_list
-        integer :: pos, i
+        integer(ip) :: pos, i
         allocate (tree%node_list(tree%num_nodes))
         pos = 1
         call downward_pass(tree%root_node, pos)
@@ -281,8 +285,8 @@ contains
 
     recursive subroutine downward_pass(node, pos)
         type(node_type), intent(in), target :: node
-        integer, intent(inout) :: pos
-        integer :: octant
+        integer(ip), intent(inout) :: pos
+        integer(ip) :: octant
         tree%max_depth = max(tree%max_depth, node%depth)
         tree%node_list(pos)%node => node
         tree%node_list(pos)%node%idx = pos
@@ -301,22 +305,25 @@ contains
         if (allocated(tree%centers)) deallocate (tree%centers)
         if (allocated(tree%cell_multipoles)) deallocate (tree%cell_multipoles)
         if (allocated(tree%local_expansion)) deallocate (tree%local_expansion)
+        if (allocated(settings%aijk)) deallocate (settings%aijk)
     end subroutine finalize
 
     recursive subroutine clean_node(node)
         type(node_type), intent(inout) :: node
-        integer octant
+        integer(ip) octant
         do octant = 0, 7
             if (node%occupied(octant)) then
                 call clean_node(node%children(octant))
             end if
         end do
         deallocate (node%children)
+        deallocate (node%particle_interactions)
+        deallocate (node%cell_interactions)
+        deallocate (node%leaf)
     end subroutine clean_node
 
     subroutine build_interaction_lists_fmm
-        integer :: i, j, k
-        k = 1
+        integer(ip) :: i, j, k
         k = 1
         do i = 1, tree%num_nodes
             ! just temporary allocation, will be resized to fit later
@@ -344,15 +351,13 @@ contains
 
     recursive subroutine interact_fmm(node_i, node_j, theta, k)
         type(node_type) :: node_i, node_j
-        integer :: octant
-        real(8) :: theta
         integer, intent(in) :: k
-        real(8) :: delta(3)
-        real(8) :: r
-        real(8) :: displacement(3)
-        logical :: is_central
-    
-        displacement = matmul(settings%box_matrix, settings%aijk(k, :))
+        integer(ip) :: octant
+        real(rp) :: theta
+        real(rp) :: delta(3), displacement(3)
+        real(rp) :: r
+
+        displacement = matmul(settings%box_matrix, real(settings%aijk(k, :), rp))
 
         delta = node_i%center - (node_j%center + displacement)
         r = norm2(delta)
@@ -380,15 +385,15 @@ contains
     end subroutine interact_fmm
 
     subroutine multipole_accumulate_kernel(delta, source_multipoles, target_multipoles)
-        real(8), intent(in) :: delta(3)
-        real(8), dimension(:), intent(in) :: source_multipoles
-        real(8), dimension(:), intent(inout) :: target_multipoles
-        integer :: source_index, source_order, sx, sy, sz
-        integer :: target_index, target_order, tx, ty, tz
-        real(8) :: symfac
-        integer :: max_multipole_order
-        real(8) :: monomial
-        max_multipole_order = NINT((size(tree%cell_multipoles, 2) * 6)**(1./3.)) - 2
+        real(rp), intent(in) :: delta(3)
+        real(rp), dimension(:), intent(in) :: source_multipoles
+        real(rp), dimension(:), intent(inout) :: target_multipoles
+        integer(ip) :: source_index, source_order, sx, sy, sz
+        integer(ip) :: target_index, target_order, tx, ty, tz
+        real(rp) :: symfac
+        integer(ip) :: max_multipole_order
+        real(rp) :: monomial
+        max_multipole_order = NINT((real(size(tree%cell_multipoles, 2), rp) * 6_rp)**(1.0_rp/3.0_rp)) - 2_ip
         do source_order = 0, max_multipole_order
             do target_order = source_order, settings%expansion_order
                 do sx = source_order, 0, -1
@@ -401,6 +406,8 @@ contains
                                     do tz = target_order, sz, -1
                                         if (tx + ty + tz /= target_order) cycle
                                         target_index = xyz2idx(tx, ty, tz)
+                                        ! unsure about this ....
+                                        ! maybe needs symmetry factor?
                                         symfac = binom(tx, sx) * binom(ty, sy) * binom(tz, sz)
                                         monomial = delta(1)**(tx - sx) * delta(2)**(ty - sy) * delta(3)**(tz - sz)
                                         target_multipoles(target_index) = target_multipoles(target_index) &
@@ -417,7 +424,7 @@ contains
 
     recursive subroutine multipole_accumulate(source_node_index, target_node_index)
         integer, intent(in) :: source_node_index, target_node_index
-        real(8) :: delta(3)
+        real(rp) :: delta(3)
 
         if (tree%node_list(target_node_index)%node%idx /= 1) then
             call multipole_accumulate(source_node_index, tree%node_list(target_node_index)%node%parent%idx)
@@ -428,16 +435,16 @@ contains
     end subroutine multipole_accumulate
 
     subroutine shift_multipole_vec(source_multipole, target_multipole, dx, dy, dz)
-        real(8), intent(in) :: source_multipole(:, :)
-        real(8), intent(inout) :: target_multipole(:)
-        real(8), intent(in) :: dx(:), dy(:), dz(:)
-        integer :: source_index, source_order, sx, sy, sz
-        integer :: target_index, target_order, tx, ty, tz
-        real(8) :: symfac
-        integer :: max_multipole_order
-        real(8) :: monomial(size(dx))
+        real(rp), intent(in) :: source_multipole(:, :)
+        real(rp), intent(inout) :: target_multipole(:)
+        real(rp), intent(in) :: dx(:), dy(:), dz(:)
+        integer(ip) :: source_index, source_order, sx, sy, sz
+        integer(ip) :: target_index, target_order, tx, ty, tz
+        real(rp) :: symfac
+        integer(ip) :: max_multipole_order
+        real(rp) :: monomial(size(dx))
 
-        max_multipole_order = NINT((size(source_multipole, 2) * 6)**(1./3.)) - 2
+        max_multipole_order = NINT((real(size(source_multipole, 2), rp) * 6_rp)**(1.0_rp/3.0_rp)) - 2_ip
         do source_order = 0, max_multipole_order
             do target_order = source_order, settings%expansion_order
                 do sx = source_order, 0, -1
@@ -473,14 +480,15 @@ contains
         include 'mpif.h'
 #endif
 #endif
-        integer, intent(in) :: comm
-        integer :: i, num_terminal
-        real(8), allocatable :: dx(:), dy(:), dz(:)
+        integer(ip), intent(in) :: comm
+        integer(ip) :: i, num_terminal
+        real(rp), allocatable :: dx(:), dy(:), dz(:)
         type(node_type) :: node
-        integer :: mpi_size, mpi_rank, ierr, work_size, work_start, work_stop, node_idx
-        integer, allocatable :: terminal_node_list(:)
+        integer(ip) :: mpi_size, mpi_rank, ierr, work_size, work_start, work_stop, node_idx
+        integer(ip), allocatable :: terminal_node_list(:)
 
-        allocate (tree%cell_multipoles(tree%num_nodes, settings%multipole_size), source=0.0D0)
+        allocate (tree%cell_multipoles(tree%num_nodes, settings%multipole_size))
+        tree%cell_multipoles = 0.0_rp
 #ifdef VAR_MPI
         call mpi_comm_size(comm, mpi_size, ierr)
         call mpi_comm_rank(comm, mpi_rank, ierr)
@@ -516,9 +524,9 @@ contains
             allocate (dx(node%nleaf))
             allocate (dy(node%nleaf))
             allocate (dz(node%nleaf))
-            dx = tree%coordinates(node%leaf(1:node%nleaf), 1) - node%center(1)
-            dy = tree%coordinates(node%leaf(1:node%nleaf), 2) - node%center(2)
-            dz = tree%coordinates(node%leaf(1:node%nleaf), 3) - node%center(3)
+            dx(:) = tree%coordinates(node%leaf(1:node%nleaf), 1) - node%center(1)
+            dy(:) = tree%coordinates(node%leaf(1:node%nleaf), 2) - node%center(2)
+            dz(:) = tree%coordinates(node%leaf(1:node%nleaf), 3) - node%center(3)
             call shift_multipole_vec(tree%source_multipoles(node%leaf(1:node%nleaf), :), tree%cell_multipoles(node_idx, :), dx, dy, dz)
             deallocate (dx)
             deallocate (dy)
@@ -540,32 +548,33 @@ contains
     function multipole_field(multipole, x, y, z, max_field_order, damp_type, damping_factors) result(F)
         ! field up to and including field_order
         ! compute field from N multipoles on one point
-        real(8), allocatable :: F(:)
-        real(8), intent(in) :: multipole(:, :)
-        real(8), intent(in) :: x(:), y(:), z(:)
-        integer, intent(in) :: max_field_order
-        character(len=6), intent(in), optional :: damp_type
-        real(8), intent(in), optional :: damping_factors(:)
-        integer :: max_multipole_order, multipole_order, sx, sy, sz
-        integer :: field_order, tx, ty, tz
-        integer :: multipole_index, field_index, tensor_index
-        integer :: max_tensor_order
-        real(8) :: symfac
-        real(8) :: taylor
-        integer :: length, N
-        real(8), allocatable :: T(:, :)
+        real(rp), allocatable :: F(:)
+        real(rp), intent(in) :: multipole(:, :)
+        real(rp), intent(in) :: x(:), y(:), z(:)
+        integer(ip), intent(in) :: max_field_order
+        character(len=*), intent(in) :: damp_type
+        real(rp), intent(in) :: damping_factors(:)
+        integer(ip) :: max_multipole_order, multipole_order, sx, sy, sz
+        integer(ip) :: field_order, tx, ty, tz
+        integer(ip) :: multipole_index, field_index, tensor_index
+        integer(ip) :: max_tensor_order
+        real(rp) :: symfac
+        real(rp) :: taylor
+        integer(ip) :: length, N
+        real(rp), allocatable :: T(:, :)
 
         N = size(x)
 
         length = (max_field_order + 1) * (max_field_order + 2) * (max_field_order + 3) / 6
-        allocate (F(length), source=0.0D0)
-        max_multipole_order = NINT((size(multipole, 2) * 6)**(1./3.)) - 2
+        allocate (F(length))
+        F = 0.0_rp
+        max_multipole_order = NINT((real(size(multipole, 2), rp) * 6_rp)**(1.0_rp/3.0_rp)) - 2_ip
 
         max_tensor_order = max_field_order + max_multipole_order
 
         length = (max_tensor_order + 1) * (max_tensor_order + 2) * (max_tensor_order + 3) / 6
-        allocate (T(N, length), source=0.0D0)
-
+        allocate (T(N, length))
+        T = 0.0_rp
         ! T(i, 1) -> T0
         ! T(i, 2) -> T1_x
         ! T(i, 3) -> T1_y
@@ -573,16 +582,16 @@ contains
         ! T(i, 5) -> T2_xx
         ! T(i, 6) -> T2_xy
         ! ...
-        if (present(damp_type)) then
-            if (damp_type == 'AMOEBA') then
-                call Tn_damp_amoeba(max_tensor_order, x, y, z, damping_factors, T)
-            else if (damp_type == 'THOLE ') then
-                call Tn_damp_thole(max_tensor_order, x, y, z, damping_factors, T)
-            else if (damp_type == 'ERF   ') then
-                call Tn_damp_erf(max_tensor_order, x, y, z, damping_factors, T)
-            end if
-        else
+        if (trim(damp_type) == 'AMOEBA') then
+            call Tn_damp_amoeba(max_tensor_order, x, y, z, damping_factors, T)
+        else if (trim(damp_type) == 'THOLE') then
+            call Tn_damp_thole(max_tensor_order, x, y, z, damping_factors, T)
+        else if (trim(damp_type) == 'ERF') then
+            call Tn_damp_erf(max_tensor_order, x, y, z, damping_factors, T)
+        else if (trim(damp_type) == '') then
             call Tn(max_tensor_order, x, y, z, T)
+        else
+            error stop "Unknown damp type: " // damp_type
         end if
         do field_order = 0, max_field_order
             do multipole_order = 0, max_multipole_order
@@ -619,26 +628,26 @@ contains
         include 'mpif.h'
 #endif
 #endif
-        integer, intent(in) :: comm
-        real(8), intent(inout) :: field(:, :)
-        integer, intent(in) :: exclusions(:, :)
-        integer, intent(in) :: max_field_order
-        character(len=6), intent(in), optional :: damp_type
-        real(8), intent(in), optional :: damping_factors(:)
-        real(8), allocatable :: full_damping_factors(:)
+        integer(ip), intent(in) :: comm
+        real(rp), intent(inout) :: field(:, :)
+        integer(ip), intent(in) :: exclusions(:, :)
+        integer(ip), intent(in) :: max_field_order
+        character(len=*), intent(in) :: damp_type
+        real(rp), intent(in) :: damping_factors(:)
+        real(rp), allocatable :: full_damping_factors(:)
 
-        integer :: j, ci, cj, leaf_i, leaf_j
-        real(8)  :: dx(settings%ncrit), dy(settings%ncrit), dz(settings%ncrit)
+        integer(ip) :: j, ci, cj, leaf_i, leaf_j
+        real(rp)  :: dx(settings%ncrit), dy(settings%ncrit), dz(settings%ncrit)
         type(list_type) :: particle_list
         type(node_type) :: node_i, node_j
-        integer :: mpi_size, mpi_rank, ierr
-        integer, allocatable :: work_node_list(:), work_leaf_list(:)
-        integer :: work_start, work_stop, work_idx, N, total_work
-        integer :: ideal_work_size, ideal_work_start, ideal_work_stop
-        logical :: set_work_start, set_work_stop
-        integer :: periodic_index
-        logical :: central
-        real(8), dimension(3) :: displacement
+        integer(ip) :: mpi_size, mpi_rank, ierr
+        integer(ip), allocatable :: work_node_list(:), work_leaf_list(:)
+        integer(ip) :: work_start, work_stop, work_idx, N, total_work
+        integer(ip) :: ideal_work_size, ideal_work_start, ideal_work_stop
+        logical(lp) :: set_work_start, set_work_stop
+        integer(ip) :: periodic_index
+        logical(lp) :: central
+        real(rp), dimension(3) :: displacement
 #ifdef VAR_MPI
         call mpi_comm_size(comm, mpi_size, ierr)
         call mpi_comm_rank(comm, mpi_rank, ierr)
@@ -651,7 +660,7 @@ contains
         allocate (work_leaf_list(N))
         ! get total work estimate
         do periodic_index = 1, settings%num_interaction_lists
-            displacement = matmul(settings%box_matrix, settings%aijk(periodic_index, :))
+            displacement = matmul(settings%box_matrix, real(settings%aijk(periodic_index, :), rp))
             central = .false.
             if (all(settings%aijk(periodic_index, :) == 0)) central = .true.
             total_work = 0
@@ -705,25 +714,24 @@ contains
                     do j = 1, node_j%nleaf
                         leaf_j = node_j%leaf(j)
                         if (any(exclusions(leaf_i, :) == leaf_j) .and. central) then
-                            dx(j) = 1d10 ! T(x,y,z) -> 0. as x,y,z -> large numbers
-                            dy(j) = 1d10 ! a bit of a hacky way to do exclusions
-                            dz(j) = 1d10 ! but makes it easy to pass the entire vector into multipole_field
+                            dx(j) = 1e10_rp ! T(x,y,z) -> 0. as x,y,z -> large numbers
+                            dy(j) = 1e10_rp ! a bit of a hacky way to do exclusions
+                            dz(j) = 1e10_rp ! but makes it easy to pass the entire vector into multipole_field
                         end if
                     end do
-                    if (present(damp_type)) then
+                    if (damp_type /= '') then
                         allocate (full_damping_factors(node_j%nleaf))
                         do j = 1, node_j%nleaf
                             leaf_j = node_j%leaf(j)
                             full_damping_factors(j) = damping_factors(leaf_i) * damping_factors(leaf_j)
                         end do
-                        field(leaf_i, :) = field(leaf_i, :) + multipole_field(tree%source_multipoles(node_j%leaf(1:node_j%nleaf), :), &
-                                                                              dx(1:node_j%nleaf), dy(1:node_j%nleaf), dz(1:node_j%nleaf), max_field_order, &
-                                                                              damp_type, full_damping_factors)
-                        deallocate (full_damping_factors)
                     else
-                        field(leaf_i, :) = field(leaf_i, :) + multipole_field(tree%source_multipoles(node_j%leaf(1:node_j%nleaf), :), &
-                                                                              dx(1:node_j%nleaf), dy(1:node_j%nleaf), dz(1:node_j%nleaf), max_field_order)
+                        allocate (full_damping_factors(0))
                     end if
+                    field(leaf_i, :) = field(leaf_i, :) + multipole_field(tree%source_multipoles(node_j%leaf(1:node_j%nleaf), :), &
+                                                                          dx(1:node_j%nleaf), dy(1:node_j%nleaf), dz(1:node_j%nleaf), max_field_order, &
+                                                                          damp_type, full_damping_factors)
+                if (allocated(full_damping_factors)) deallocate (full_damping_factors)
                 end do
             end do
         end do
@@ -739,6 +747,7 @@ contains
     end subroutine particle_fields
 
     subroutine particle_fields_direct(comm, field, coordinates, multipoles, exclusions, max_field_order, damp_type, damping_factors)
+        !use pelib_options, only: box_matrix, box_matrix_inv, pelib_mic
 #ifdef VAR_MPI
 #if defined(USE_MPI_MOD_F90)
         use mpi
@@ -746,20 +755,21 @@ contains
         include 'mpif.h'
 #endif
 #endif
-        integer, intent(in) :: comm
-        real(8), intent(inout) :: field(:, :)
-        real(8), intent(in) :: coordinates(:, :)
-        real(8), intent(in) :: multipoles(:, :)
-        integer, intent(in) :: exclusions(:, :)
-        integer, intent(in) :: max_field_order
-        character(len=6), intent(in), optional :: damp_type
-        real(8), intent(in), optional :: damping_factors(:)
-        real(8), allocatable :: full_damping_factors(:)
-        integer :: i, j, exclusion
-        integer :: N
-        integer :: work_start, work_stop, work_size
-        integer :: mpi_rank, mpi_size, ierr
-        real(8) :: dx(size(coordinates, 1)), dy(size(coordinates, 1)), dz(size(coordinates, 1))
+        integer(ip), intent(in) :: comm
+        real(rp), intent(inout) :: field(:, :)
+        real(rp), intent(in) :: coordinates(:, :)
+        real(rp), intent(in) :: multipoles(:, :)
+        integer(ip), intent(in) :: exclusions(:, :)
+        integer(ip), intent(in) :: max_field_order
+        character(len=*), intent(in) :: damp_type
+        real(rp), intent(in) :: damping_factors(:)
+        real(rp), allocatable :: full_damping_factors(:)
+        integer(ip) :: i, j, exclusion
+        integer(ip) :: N
+        integer(ip) :: work_start, work_stop, work_size
+        integer(ip) :: mpi_rank, mpi_size, ierr
+        real(rp), allocatable :: Rji(:, :)
+        real(rp) :: s_i(3)
 #ifdef VAR_MPI
         call mpi_comm_size(comm, mpi_size, ierr)
         call mpi_comm_rank(comm, mpi_rank, ierr)
@@ -773,28 +783,35 @@ contains
         work_stop = (mpi_rank + 1) * work_size
         if (mpi_rank == mpi_size - 1) work_stop = N
 
+        allocate(Rji(N,3))
 
         do i = work_start, work_stop
-            dx = coordinates(i, 1) - coordinates(:, 1)
-            dy = coordinates(i, 2) - coordinates(:, 2)
-            dz = coordinates(i, 3) - coordinates(:, 3)
+            ! Works for any triclinic box through the box matrix
+            !if (pelib_mic) then
+            !    s_i = matmul(box_matrix_inv, coordinates(i, :))
+            !    do j = 1, N
+            !        Rji(j, :) = s_i - matmul(box_matrix_inv, coordinates(j, :))
+            !        Rji(j, :) = Rji(j, :) - anint(Rji(j, :))
+            !        Rji(j, :) = matmul(box_matrix, Rji(j, :))
+            !    end do
+            !else
+                Rji(:, 1) = coordinates(i, 1) - coordinates(:, 1)
+                Rji(:, 2) = coordinates(i, 2) - coordinates(:, 2)
+                Rji(:, 3) = coordinates(i, 3) - coordinates(:, 3)
+            !end if
             do j = 1, size(exclusions, 2)
                 exclusion = exclusions(i, j)
                 if (exclusion == 0) cycle
-                dx(exclusion) = 1d10
-                dy(exclusion) = 1d10
-                dz(exclusion) = 1d10
+                Rji(exclusion, :) = 1e10_rp
             end do
-            if (present(damp_type)) then
+            if (damp_type /= '') then
                 allocate (full_damping_factors(N))
                 do j = 1, N
                     full_damping_factors(j) = damping_factors(i) * damping_factors(j)
                 end do
-                field(i, :) = field(i, :) + multipole_field(multipoles, dx, dy, dz, max_field_order, damp_type, full_damping_factors)
-                deallocate (full_damping_factors)
-            else
-                field(i, :) = field(i, :) + multipole_field(multipoles, dx, dy, dz, max_field_order)
             end if
+            field(i, :) = field(i, :) + multipole_field(multipoles, Rji(:, 1), Rji(:, 2), Rji(:, 3), max_field_order, damp_type, full_damping_factors)
+            if (allocated(full_damping_factors)) deallocate (full_damping_factors)
         end do
 #ifdef VAR_MPI
         if (mpi_rank == 0) then
@@ -803,6 +820,7 @@ contains
             call mpi_reduce(field(1, 1), field(1, 1), size(field), MPI_REAL8, MPI_SUM, 0, comm, ierr)
         end if
 #endif
+        deallocate(Rji)
     end subroutine particle_fields_direct
 
     subroutine multipole_to_local(comm)
@@ -813,16 +831,18 @@ contains
         include 'mpif.h'
 #endif
 #endif
-        integer, intent(in) :: comm
-        integer :: ci, N
-        real(8), allocatable :: dx(:), dy(:), dz(:)
+        integer(ip), intent(in) :: comm
+        integer(ip) :: ci, N
+        real(rp), allocatable :: dx(:), dy(:), dz(:)
         type(node_type) :: node_i
         type(list_type) :: cell_list
-        integer :: work_start, work_stop, work_size
-        integer :: mpi_rank, mpi_size, ierr
-        integer :: periodic_index
-        real(8) :: displacement(3)
-        allocate (tree%local_expansion(tree%num_nodes, settings%multipole_size), source=0.0D0)
+        integer(ip) :: work_start, work_stop, work_size
+        integer(ip) :: mpi_rank, mpi_size, ierr
+        integer(ip) :: periodic_index
+        real(rp) :: displacement(3)
+        real(rp) :: dummy_damping_factors(0)
+        allocate (tree%local_expansion(tree%num_nodes, settings%multipole_size))
+        tree%local_expansion = 0.0
 #ifdef VAR_MPI
         call mpi_comm_size(comm, mpi_size, ierr)
         call mpi_comm_rank(comm, mpi_rank, ierr)
@@ -837,7 +857,7 @@ contains
         if (mpi_rank == mpi_size - 1) work_stop = N
 
         do periodic_index=1, settings%num_interaction_lists
-            displacement = matmul(settings%box_matrix, settings%aijk(periodic_index, :))
+            displacement = matmul(settings%box_matrix, real(settings%aijk(periodic_index, :), rp))
             do ci = work_start, work_stop
                 node_i = tree%node_list(ci)%node
                 cell_list = node_i%cell_interactions(periodic_index)
@@ -845,11 +865,12 @@ contains
                 allocate (dx(N))
                 allocate (dy(N))
                 allocate (dz(N))
-                dx = node_i%center(1) - (tree%centers(cell_list%elements, 1) + displacement(1))
-                dy = node_i%center(2) - (tree%centers(cell_list%elements, 2) + displacement(2))
-                dz = node_i%center(3) - (tree%centers(cell_list%elements, 3) + displacement(3))
+                dx(:) = node_i%center(1) - (tree%centers(cell_list%elements, 1) + displacement(1))
+                dy(:) = node_i%center(2) - (tree%centers(cell_list%elements, 2) + displacement(2))
+                dz(:) = node_i%center(3) - (tree%centers(cell_list%elements, 3) + displacement(3))
                 tree%local_expansion(node_i%idx, :) = tree%local_expansion(node_i%idx, :) + &
-                                                      multipole_field(tree%cell_multipoles(cell_list%elements, :), dx, dy, dz, settings%expansion_order)
+                                                      multipole_field(tree%cell_multipoles(cell_list%elements, :), dx, dy, dz, &
+                                                                      settings%expansion_order, '', dummy_damping_factors)
                 deallocate (dx)
                 deallocate (dy)
                 deallocate (dz)
@@ -860,35 +881,27 @@ contains
 #endif
     end subroutine multipole_to_local
 
-    subroutine periodic_sum(comm)
-#ifdef var_mpi
-#if defined(use_mpi_mod_f90)
-        use mpi
-#else
-        include 'mpif.h'
-#endif
-#endif
-        integer, intent(in) :: comm
-        integer :: ai, aj, ak, bi, bj, bk, multipole_size, k, level, j, i
-        real(8) :: aijk(3), bijk(3)
-        real(8), allocatable :: cell_multipoles(:,:), cell_multipoles_scaled(:), contribution(:)
-        real(8) :: d_aijk(3), d_bijk(3)
-        real(8), dimension(26*27) :: dx, dy, dz
-        real(8), parameter :: tol_periodic = 1.0d-10
-        integer, parameter :: limit = 50
-        type(node_type), pointer :: node
+    subroutine periodic_sum
+        integer(ip) :: ai, aj, ak, bi, bj, bk, multipole_size, k, level
+        real(rp) :: aijk(3), bijk(3)
+        real(rp), allocatable :: cell_multipoles(:,:), cell_multipoles_scaled(:), contribution(:)
+        real(rp) :: d_aijk(3), d_bijk(3)
+        real(rp), dimension(26*27) :: dx, dy, dz
+        real(rp), parameter :: tol_periodic = 1.0e-8_rp
+        integer(ip), parameter :: limit = 50
+        real(rp) :: dummy_damping_factors(0)
         ! scale up to next 3x3x3 supercell
         ! loop over 26 neighbors to the central cell and get contributions from 27 subcells onto central cell
         multipole_size = size(tree%cell_multipoles, 2)
         ! force charge neutrality
-        tree%cell_multipoles(1,1) = 0.0d0
+        tree%cell_multipoles(1,1) = 0.0_rp
         allocate(cell_multipoles(26*27, multipole_size))
         allocate(cell_multipoles_scaled(multipole_size))
         allocate(contribution(size(tree%local_expansion, 2)))
         do k=1, 26*27
             cell_multipoles(k, :) = tree%cell_multipoles(tree%root_node%idx, :)
         end do
-        cell_multipoles_scaled = cell_multipoles(1, :)
+        cell_multipoles_scaled(:) = cell_multipoles(1, :)
         do level=1, limit
             !if (level == limit) error stop "periodic sum did not converge"
             k = 1
@@ -897,16 +910,16 @@ contains
                     do ak=-1,1
                         if (ai == 0 .and. aj == 0 .and. ak == 0) cycle
                         ! accumulate for next scaled multipole
-                        aijk = [ai*3.0d0**level, aj*3.0d0**level, ak*3.0d0**level]
+                        aijk = [real(ai,rp)*3.0_rp**level, real(aj, rp)*3.0_rp**level, real(ak, rp)*3.0_rp**level]
                         d_aijk = matmul(settings%box_matrix, aijk)
-                        call multipole_accumulate_kernel(d_aijk/3.0d0, &
+                        call multipole_accumulate_kernel(d_aijk/3.0_rp, &
                                                          cell_multipoles(1,:), &
                                                          cell_multipoles_scaled)
                         ! get positions of the 27 subcells
                         do bi=-1,1
                             do bj=-1,1
                                 do bk=-1,1
-                                    bijk = [bi*3.0d0**(level-1), bj*3.0d0**(level-1), bk*3.0d0**(level-1)]
+                                    bijk = [real(bi, rp)*3.0_rp**(level-1), real(bj, rp)*3.0_rp**(level-1), real(bk, rp)*3.0_rp**(level-1)]
                                     d_bijk = matmul(settings%box_matrix, bijk)
                                     dx(k) = d_aijk(1) + d_bijk(1)
                                     dy(k) = d_aijk(2) + d_bijk(2)
@@ -918,6 +931,7 @@ contains
                     end do
                 end do
             end do
+            ! alternative would be
             ! m2p barnes-hut like step
             ! dx, dy, dz are distances from root cell to image cells
             ! do i=1, size(field, 1)
@@ -926,23 +940,22 @@ contains
             !     field(i, :) = field(i,:) + contribution
             !     contribution_tracker = contribution_tracker + abs(contribution)
             ! end do
-            contribution = multipole_field(cell_multipoles, dx, dy, dz, settings%expansion_order)
+            contribution(:) = multipole_field(cell_multipoles, dx, dy, dz, settings%expansion_order, '', dummy_damping_factors)
             tree%local_expansion(tree%root_node%idx, :) = tree%local_expansion(tree%root_node%idx, :) + contribution
 
             do k=1, 26*27
                 cell_multipoles(k, :) = cell_multipoles_scaled(:)
             end do
-            !print *, 'periodic sum: level, norm2(contribution)', level, norm2(contribution(2:))
+            ! print *, 'periodic sum: level, norm2(contribution)', level, norm2(contribution(2:))
             if (norm2(contribution(2:)) < tol_periodic) exit
         end do
     end subroutine periodic_sum
 
-    subroutine dipole_correction(comm, field, max_field_order)
-        integer, intent(in) :: comm
-        real(8), intent(inout) :: field(:, :)
+    subroutine dipole_correction(field, max_field_order)
+        real(rp), intent(inout) :: field(:, :)
         integer, intent(in) :: max_field_order
-        real(8) :: volume, dipole(3), quadrupole_trace
-        real(8) :: h(3,3)
+        real(rp) :: volume, dipole(3), quadrupole_trace
+        real(rp) :: h(3,3)
         integer :: i
         h(:,:) = settings%box_matrix
         volume = h(1,1)*(h(2,2)*h(3,3) - h(2,3)*h(3,2)) &
@@ -955,24 +968,23 @@ contains
         ! correction to the potential
         
         do i=1, size(field, 1)
-            field(i, 1) = field(i, 1) + 4.0d0 * 3.14159265359d0 * sum(dipole*tree%coordinates(i,:)) / (3.0d0 * volume) &
-                        + 2.0d0*3.14159265359d0*quadrupole_trace/(3.0d0 * volume) !? 
+            field(i, 1) = field(i, 1) + 4.0_rp * 3.14159265359_rp * sum(dipole*tree%coordinates(i,:)) / (3.0_rp * volume) &
+                        + 2.0_rp*3.14159265359_rp*quadrupole_trace/(3.0_rp * volume) !? 
         end do
         if (max_field_order >= 1) then
             do i=1, size(field, 1)
-                field(i, 2:4) = field(i, 2:4) + 4.0d0 * 3.14159265359d0 * dipole / (3.0d0 * volume)
+                field(i, 2:4) = field(i, 2:4) + 4.0_rp * 3.14159265359_rp * dipole / (3.0_rp * volume)
             end do
         end if
-        
     end subroutine dipole_correction
 
     subroutine local_to_local
-        integer :: i, num_nodes_depth, depth
-        integer :: source_order, source_index, sx, sy, sz
-        integer :: target_order, target_index, tx, ty, tz
-        real(8) :: prefactor
-        real(8), allocatable :: dx(:), dy(:), dz(:)
-        integer, allocatable :: source_cell_indices(:), target_cell_indices(:)
+        integer(ip) :: i, num_nodes_depth, depth
+        integer(ip) :: source_order, source_index, sx, sy, sz
+        integer(ip) :: target_order, target_index, tx, ty, tz
+        real(rp) :: prefactor
+        real(rp), allocatable :: dx(:), dy(:), dz(:)
+        integer(ip), allocatable :: source_cell_indices(:), target_cell_indices(:)
         type(node_type) :: node
         ! important in case of MPI: can only parallelize from level-1 -> level
         ! might need to make separate lists for this
@@ -994,9 +1006,9 @@ contains
             allocate (dx(num_nodes_depth))
             allocate (dy(num_nodes_depth))
             allocate (dz(num_nodes_depth))
-            dx = tree%centers(target_cell_indices(1:num_nodes_depth), 1) - tree%centers(source_cell_indices(1:num_nodes_depth), 1)
-            dy = tree%centers(target_cell_indices(1:num_nodes_depth), 2) - tree%centers(source_cell_indices(1:num_nodes_depth), 2)
-            dz = tree%centers(target_cell_indices(1:num_nodes_depth), 3) - tree%centers(source_cell_indices(1:num_nodes_depth), 3)
+            dx(:) = tree%centers(target_cell_indices(1:num_nodes_depth), 1) - tree%centers(source_cell_indices(1:num_nodes_depth), 1)
+            dy(:) = tree%centers(target_cell_indices(1:num_nodes_depth), 2) - tree%centers(source_cell_indices(1:num_nodes_depth), 2)
+            dz(:) = tree%centers(target_cell_indices(1:num_nodes_depth), 3) - tree%centers(source_cell_indices(1:num_nodes_depth), 3)
             do target_order = 0, settings%expansion_order
                 do tx = target_order, 0, -1
                     do ty = target_order, 0, -1
@@ -1009,9 +1021,12 @@ contains
                                         do sz = source_order, tz, -1
                                             if (sx + sy + sz /= source_order) cycle
                                             source_index = xyz2idx(sx, sy, sz)
-                                            prefactor = 1.0 / real(factorial(sx - tx) * factorial(sy - ty) * factorial(sz - tz))
-                                            tree%local_expansion(target_cell_indices(1:num_nodes_depth), target_index) = tree%local_expansion(target_cell_indices(1:num_nodes_depth), target_index) &
-                                                                                                                         + prefactor * tree%local_expansion(source_cell_indices(1:num_nodes_depth), source_index) * (dx**(sx - tx) * dy**(sy - ty) * dz**(sz - tz))
+                                            prefactor = 1.0 / (factorial(sx - tx) * factorial(sy - ty) * factorial(sz - tz))
+                                            tree%local_expansion(target_cell_indices(1:num_nodes_depth), target_index) = &
+                                                tree%local_expansion(target_cell_indices(1:num_nodes_depth), target_index) &
+                                                + prefactor &
+                                                * tree%local_expansion(source_cell_indices(1:num_nodes_depth), source_index) &
+                                                * (dx**(sx - tx) * dy**(sy - ty) * dz**(sz - tz))
                                         end do
                                     end do
                                 end do
@@ -1036,17 +1051,17 @@ contains
         include 'mpif.h'
 #endif
 #endif
-        integer, intent(in) :: comm
-        real(8), intent(inout) :: field(:, :)
-        integer, intent(in) :: max_field_order
+        integer(ip), intent(in) :: comm
+        real(rp), intent(inout) :: field(:, :)
+        integer(ip), intent(in) :: max_field_order
         type(node_type) :: node
-        integer :: source_order, source_index, sx, sy, sz
-        integer :: target_order, target_index, tx, ty, tz
-        real(8) :: prefactor
-        real(8) :: dx(settings%ncrit), dy(settings%ncrit), dz(settings%ncrit)
-        integer :: work_start, work_stop, work_size, i, num_terminal
-        integer :: mpi_rank, mpi_size, ierr
-        integer, allocatable :: terminal_node_list(:)
+        integer(ip) :: source_order, source_index, sx, sy, sz
+        integer(ip) :: target_order, target_index, tx, ty, tz
+        real(rp) :: prefactor
+        real(rp) :: dx(settings%ncrit), dy(settings%ncrit), dz(settings%ncrit)
+        integer(ip) :: work_start, work_stop, work_size, i, num_terminal
+        integer(ip) :: mpi_rank, mpi_size, ierr
+        integer(ip), allocatable :: terminal_node_list(:)
 #ifdef VAR_MPI
         call mpi_comm_size(comm, mpi_size, ierr)
         call mpi_comm_rank(comm, mpi_rank, ierr)
@@ -1094,7 +1109,7 @@ contains
                                         do sz = source_order, tz, -1
                                             if (sx + sy + sz /= source_order) cycle
                                             source_index = xyz2idx(sx, sy, sz)
-                                            prefactor = 1.0 / real(factorial(sx - tx) * factorial(sy - ty) * factorial(sz - tz))
+                                            prefactor = 1.0 / (factorial(sx - tx) * factorial(sy - ty) * factorial(sz - tz))
                                             field(node%leaf(1:node%nleaf), target_index) = field(node%leaf(1:node%nleaf), target_index) &
                                                                                            + prefactor * tree%local_expansion(node%idx, source_index) * dx**(sx - tx) * dy**(sy - ty) * dz**(sz - tz)
                                         end do
@@ -1117,13 +1132,13 @@ contains
     end subroutine local_to_particle
 
     recursive subroutine classify_box(target_coordinates, theta, node, interaction_type)
-        real(8), intent(in) :: target_coordinates(:, :)
-        real(8), intent(in) :: theta
+        real(rp), intent(in) :: target_coordinates(:, :)
+        real(rp), intent(in) :: theta
         type(node_type), intent(inout) :: node
-        integer, intent(inout) :: interaction_type(:)
-        logical :: too_close
-        integer :: i, octant
-        real(8) :: delta(3), r
+        integer(ip), intent(inout) :: interaction_type(:)
+        logical(lp) :: too_close
+        integer(ip) :: i, octant
+        real(rp) :: delta(3), r
         ! 0 -> don't use node (initial value)
         ! 1 -> use node, box
         ! 2 -> use node, particles
@@ -1132,7 +1147,6 @@ contains
         ! any(r*theta < box%r)?
         do i = 1, size(target_coordinates, 1)
             delta = target_coordinates(i, :) - node%center
-            delta(3) = 0.0d0
             r = norm2(delta)
             if (r * theta <= node%rmax) then
                 too_close = .true.
@@ -1155,149 +1169,233 @@ contains
         end if
     end subroutine classify_box
 
-    subroutine get_multipoles(comm, coordinates, multipoles, target_coordinates, theta, ncrit, expansion_order, result_coordinates, result_multipoles, result_sizes)
-        integer, intent(in) :: comm
-        real(8), intent(in), target :: coordinates(:, :)
-        real(8), intent(in), target :: multipoles(:, :)
-        real(8), intent(in) :: target_coordinates(:, :)
-        real(8), intent(in) :: theta
-        integer, intent(in) :: ncrit
-        integer, intent(in) :: expansion_order
-        real(8), intent(out), allocatable :: result_coordinates(:, :)
-        real(8), intent(out), allocatable :: result_multipoles(:, :)
-        real(8), intent(out), allocatable :: result_sizes(:)
-        real(8), pointer :: p_coordinates(:, :)
-        real(8), pointer :: p_multipoles(:, :)
-        real(8), pointer :: p_target_coordinates(:, :)
-        integer :: i, j, k, leaf, output_size
-        integer, allocatable :: interaction_type(:)
-        p_coordinates => coordinates
-        p_multipoles => multipoles
+    subroutine get_multipoles(comm, coordinates, multipoles, target_coordinates, theta, ncrit, expansion_order, idx_near_field, box_coordinates, box_multipoles)
+        integer(ip), intent(in) :: comm
+        real(rp), intent(in), target :: coordinates(:, :)
+        real(rp), intent(in), target :: multipoles(:, :, :)
+        real(rp), intent(in) :: target_coordinates(:, :)
+        real(rp), intent(in) :: theta
+        integer(ip), intent(in) :: ncrit
+        integer(ip), intent(in) :: expansion_order
+        real(rp), intent(out), allocatable :: box_coordinates(:, :)
+        real(rp), intent(out), allocatable :: box_multipoles(:, :, :)
+        integer(ip), intent(out), allocatable :: idx_near_field(:)
+        real(rp), pointer :: p_coordinates(:, :)
+        real(rp), pointer :: p_multipoles(:, :)
+        integer(ip) :: i, j, k, d, ndens, leaf, num_near_field, num_far_field
+        integer(ip), allocatable :: interaction_type(:)
+        p_coordinates => coordinates(:,:)
+        p_multipoles => multipoles(:,:,1)
+        ndens = size(multipoles, 3)
         call octree_build(ncrit, expansion_order, theta, p_coordinates, p_multipoles)
-        call multipole_expansion(comm)
         allocate (interaction_type(tree%num_nodes), source=0)
         call classify_box(target_coordinates, theta, tree%root_node, interaction_type)
         ! find dimension of output coordinates/multipoles
         ! 0 -> don't use node
         ! 1 -> use node, box
         ! 2 -> use node, particles
-        output_size = 0
+        num_near_field = 0
+        num_far_field = 0
         do i = 1, tree%num_nodes
             if (interaction_type(i) == 0) then
                 continue
             else if (interaction_type(i) == 1) then
-                output_size = output_size + 1
+                num_far_field = num_far_field + 1
             else if (interaction_type(i) == 2) then
-                output_size = output_size + tree%node_list(i)%node%nleaf
+                num_near_field = num_near_field + tree%node_list(i)%node%nleaf
             else
                 error stop "Wrong interaction_type"
             end if
         end do
 
-        if (allocated(result_coordinates)) deallocate (result_coordinates)
-        if (allocated(result_multipoles)) deallocate (result_multipoles)
-        if (allocated(result_sizes)) deallocate (result_sizes)
-
-        allocate (result_coordinates(output_size, 3))
-        allocate (result_multipoles(output_size, (expansion_order + 1) * (expansion_order + 2) * (expansion_order + 3) / 6))
-        allocate (result_sizes(output_size))
-        ! place resulting multipoles in output arrays
+        if (allocated(box_coordinates)) deallocate (box_coordinates)
+        if (allocated(box_multipoles)) deallocate (box_multipoles)
+        if (allocated(idx_near_field)) deallocate (idx_near_field)
+        allocate(box_coordinates(num_far_field, 3))
+        allocate(box_multipoles(num_far_field, (expansion_order + 1) * (expansion_order + 2) * (expansion_order + 3) / 6, ndens))
+        allocate(idx_near_field(num_near_field))
+        ! output: near-field
         k = 1
+        do i = 1, tree%num_nodes
+            if (interaction_type(i) == 2) then
+                do j = 1, tree%node_list(i)%node%nleaf
+                    leaf = tree%node_list(i)%node%leaf(j)
+                    idx_near_field(k) = leaf
+                    k = k + 1
+                end do
+            end if
+        end do
+        ! output: far-field - place resulting multipoles in output arrays
+        do d = 1, ndens
+            call finalize
+            p_coordinates => coordinates(:,:)
+            p_multipoles => multipoles(:,:,d)
+            call octree_build(ncrit, expansion_order, theta, p_coordinates, p_multipoles)
+            call multipole_expansion(comm)
+            k = 1
+            do i = 1, tree%num_nodes
+                if (interaction_type(i) == 1) then
+                    box_coordinates(k, :) = tree%centers(i, :)
+                    box_multipoles(k, :, d) = tree%cell_multipoles(i, :)
+                    k = k + 1
+                end if 
+            end do
+        end do
+        call finalize
+    end subroutine get_multipoles
+
+    subroutine get_boxes(coordinates, target_coordinates, theta, ncrit, expansion_order, idx_near_field, box_coordinates, box_indices)
+        real(rp), intent(in), target :: coordinates(:, :)
+        real(rp), intent(in) :: target_coordinates(:, :)
+        real(rp), intent(in) :: theta
+        integer(ip), intent(in) :: ncrit
+        integer(ip), intent(in) :: expansion_order
+        real(rp), intent(out), allocatable :: box_coordinates(:, :)
+        integer(ip), intent(out), allocatable :: idx_near_field(:), box_indices(:)
+        real(rp), pointer :: p_coordinates(:, :)
+        real(rp), pointer :: p_multipoles(:, :) ! dummy
+        integer(ip) :: i, j, k, leaf, num_near_field, num_far_field
+        integer(ip), allocatable :: interaction_type(:)
+        p_coordinates => coordinates(:,:)
+        call octree_build(ncrit, expansion_order, theta, p_coordinates, p_multipoles)
+        allocate (interaction_type(tree%num_nodes), source=0)
+        call classify_box(target_coordinates, theta, tree%root_node, interaction_type)
+        ! find dimension of output coordinates/multipoles
+        ! 0 -> don't use node
+        ! 1 -> use node, box
+        ! 2 -> use node, particles
+        num_near_field = 0
+        num_far_field = 0
         do i = 1, tree%num_nodes
             if (interaction_type(i) == 0) then
                 continue
             else if (interaction_type(i) == 1) then
-                result_coordinates(k, :) = tree%centers(i, :)
-                result_multipoles(k, :) = tree%cell_multipoles(i, :)
-                result_sizes(k) = tree%node_list(i)%node%rmax 
-                k = k + 1
+                num_far_field = num_far_field + 1
             else if (interaction_type(i) == 2) then
-                do j = 1, tree%node_list(i)%node%nleaf
-                    leaf = tree%node_list(i)%node%leaf(j)
-                    result_coordinates(k, :) = coordinates(leaf, :)
-                    result_multipoles(k, :) = multipoles(leaf, :)
-                    result_sizes(k) = 0.0d0
-                    k = k + 1
-                end do
+                num_near_field = num_near_field + tree%node_list(i)%node%nleaf
             else
-                error stop 'Wrong interaction_type'
+                error stop "Wrong interaction_type"
             end if
         end do
-    end subroutine get_multipoles
+        if (allocated(box_coordinates)) deallocate (box_coordinates)
+        if (allocated(box_indices)) deallocate (box_indices)
+        if (allocated(idx_near_field)) deallocate (idx_near_field)
+        allocate(box_coordinates(num_far_field, 3))
+        allocate(box_indices(num_far_field))
+        allocate(idx_near_field(num_near_field))
+        ! output: near-field
+        k = 1
+        do i = 1, tree%num_nodes
+            if (interaction_type(i) == 2) then
+                do j = 1, tree%node_list(i)%node%nleaf
+                    leaf = tree%node_list(i)%node%leaf(j)
+                    idx_near_field(k) = leaf
+                    k = k + 1
+                end do
+            end if
+        end do
+        ! output: far-field
+        k = 1
+        do i = 1, tree%num_nodes
+            if (interaction_type(i) == 1) then
+                box_coordinates(k, :) = tree%centers(i, :)
+                box_indices(k) = i
+                k = k + 1
+            end if 
+        end do
+        call finalize
+    end subroutine get_boxes
+
+    subroutine interpolate_electron_fields(comm, coordinates, local_expansion, box_indices, theta, ncrit, expansion_order, field_order, field)
+        integer(ip), intent(in) :: comm
+        real(rp), intent(in), target :: coordinates(:, :)
+        real(rp), intent(in) :: local_expansion(:, :, :)
+        integer(ip), intent(in) :: box_indices(:)
+        real(rp), intent(in) :: theta
+        integer(ip), intent(in) :: ncrit
+        integer(ip), intent(in) :: expansion_order
+        integer(ip), intent(in) :: field_order
+        real(rp), intent(out) :: field(size(coordinates, 1), (field_order + 1) * (field_order + 2) * (field_order + 3) / 6, size(local_expansion, 3))
+        real(rp), pointer :: p_coordinates(:, :)
+        real(rp), pointer :: p_multipoles(:, :)
+        integer(ip) :: i, k, box_index, ndens
+        p_coordinates => coordinates(:,:)
+        call octree_build(ncrit, expansion_order, theta, p_coordinates, p_multipoles)
+        ndens = size(local_expansion, 3)
+        allocate (tree%local_expansion(tree%num_nodes, settings%multipole_size), source=0.0_rp)
+        do k = 1, ndens
+            tree%local_expansion(:,:) = 0.0_rp
+            do i = 1, size(box_indices)
+                box_index = box_indices(i)
+                tree%local_expansion(box_index, :) = local_expansion(i, :, k)
+            end do
+            call local_to_local
+            call local_to_particle(comm, field(:,:,k), field_order)
+        end do
+        call finalize
+    end subroutine interpolate_electron_fields
 
     subroutine field_direct(comm, coordinates, multipoles, exclusions, field_order, field, damp_type, damping_factors)
-        integer, intent(in) :: comm
-        real(8), intent(in), target :: coordinates(:, :)
-        real(8), intent(in), target :: multipoles(:, :)
-        integer, intent(in) :: exclusions(:, :)
-        integer, intent(in) :: field_order
-        character(len=6), intent(in), optional :: damp_type
-        real(8), intent(in), optional :: damping_factors(:)
-        real(8), intent(out) :: field(size(coordinates, 1), (field_order + 1) * (field_order + 2) * (field_order + 3) / 6)
-        real(8), pointer :: p_coordinates(:, :)
-        real(8), pointer :: p_multipoles(:, :)
+        integer(ip), intent(in) :: comm
+        real(rp), intent(in), target :: coordinates(:, :)
+        real(rp), intent(in), target :: multipoles(:, :)
+        integer(ip), intent(in) :: exclusions(:, :)
+        integer(ip), intent(in) :: field_order
+        character(len=*), intent(in) :: damp_type
+        real(rp), intent(in) :: damping_factors(:)
+        real(rp), intent(out) :: field(size(coordinates, 1), (field_order + 1) * (field_order + 2) * (field_order + 3) / 6)
+        real(rp), pointer :: p_coordinates(:, :)
+        real(rp), pointer :: p_multipoles(:, :)
         p_coordinates => coordinates
         p_multipoles => multipoles
-        if (present(damp_type)) then
-            call particle_fields_direct(comm, field, coordinates, multipoles, exclusions, field_order, damp_type, damping_factors)
-        else
-            call particle_fields_direct(comm, field, coordinates, multipoles, exclusions, field_order)
-        end if
+        call particle_fields_direct(comm, field, coordinates, multipoles, exclusions, field_order, damp_type, damping_factors)
     end subroutine field_direct
 
-    subroutine field_fmm(comm, coordinates, multipoles, exclusions, theta, ncrit, expansion_order, field_order, field, &
-            damp_type, damping_factors, box_matrix)
-        integer, intent(in) :: comm
-        real(8), intent(in), target :: coordinates(:, :)
-        real(8), intent(in), target :: multipoles(:, :)
-        integer, intent(in) :: exclusions(:, :)
-        real(8), intent(in) :: theta
-        integer, intent(in) :: ncrit
-        integer, intent(in) :: expansion_order
-        integer, intent(in) :: field_order
-        character(len=6), intent(in), optional :: damp_type
-        real(8), intent(in), optional :: damping_factors(:)
-        real(8), intent(in), optional :: box_matrix(3,3)
-        real(8), intent(out) :: field(size(coordinates, 1), (field_order + 1) * (field_order + 2) * (field_order + 3) / 6)
-        real(8), pointer :: p_coordinates(:, :)
-        real(8), pointer :: p_multipoles(:, :)
-        
-        if (present(box_matrix)) then
-            settings%is_periodic = .true.
-            settings%box_matrix = box_matrix
-        else
-            settings%is_periodic = .false.
+    subroutine field_fmm(comm, coordinates, multipoles, exclusions, theta, ncrit, expansion_order, field_order, field,&
+                         damp_type, damping_factors, is_periodic, box_matrix)
+        integer(ip), intent(in) :: comm
+        real(rp), intent(in), target :: coordinates(:, :)
+        real(rp), intent(in), target :: multipoles(:, :)
+        integer(ip), intent(in) :: exclusions(:, :)
+        real(rp), intent(in) :: theta
+        integer(ip), intent(in) :: ncrit
+        integer(ip), intent(in) :: expansion_order
+        integer(ip), intent(in) :: field_order
+        character(len=*), intent(in) :: damp_type ! 'THOLE', 'AMOEBA', 'ERF' or '' (off)
+        real(rp), intent(in) :: damping_factors(:)
+        logical(lp), intent(in) :: is_periodic
+        real(rp), intent(in), dimension(3,3) :: box_matrix
+        real(rp), intent(out) :: field(size(coordinates, 1), (field_order + 1) * (field_order + 2) * (field_order + 3) / 6)
+        real(rp), pointer :: p_coordinates(:, :)
+        real(rp), pointer :: p_multipoles(:, :)
+
+        if (.not. (trim(damp_type) == 'THOLE' .or. &
+                   trim(damp_type) == 'AMOEBA' .or. &
+                   trim(damp_type) == 'ERF' .or. &
+                   trim(damp_type) == '')) then
+            error stop "Unknown damp type: " // damp_type
         end if
+        settings%is_periodic = is_periodic
+        settings%box_matrix = box_matrix
 
         if (size(coordinates, 1) <= ncrit) then
-            if (present(damp_type)) then
-                call field_direct(comm, coordinates, multipoles, exclusions, field_order, field, damp_type, damping_factors)
-            else
-                call field_direct(comm, coordinates, multipoles, exclusions, field_order, field)
-            end if
+            if (settings%is_periodic) error stop "Not enough coordinates for periodic FMM, please decrease ncrit"
+            call field_direct(comm, coordinates, multipoles, exclusions, field_order, field, damp_type, damping_factors)
         else
             p_coordinates => coordinates
             p_multipoles => multipoles
             call octree_build(ncrit, expansion_order, theta, p_coordinates, p_multipoles)
             call multipole_expansion(comm)
             call build_interaction_lists_fmm
-            if (present(damp_type)) then
-                if (damp_type /= '') then
-                    call particle_fields(comm, field, exclusions, field_order, damp_type, damping_factors)
-                else
-                    call particle_fields(comm, field, exclusions, field_order)
-                end if
-            else
-                call particle_fields(comm, field, exclusions, field_order)
-            end if
+            call particle_fields(comm, field, exclusions, field_order, damp_type, damping_factors)
             call multipole_to_local(comm)
             if (settings%is_periodic) then
-                call periodic_sum(comm)
-                call dipole_correction(comm, field, field_order)
+                call periodic_sum
+                call dipole_correction(field, field_order)
             end if
             call local_to_local
             call local_to_particle(comm, field, field_order)
             call finalize
         end if
     end subroutine field_fmm
-end module octree
+end module fmm
